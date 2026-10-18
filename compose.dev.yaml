@@ -1,0 +1,5 @@
+# Solo desarrollo: PostgreSQL se publica únicamente en localhost
+services:
+  db:
+    ports:
+      - '127.0.0.1:5487:5432'

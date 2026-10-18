@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+backups/
+test-artifacts/
+*.log
+
+.impeccable/review/

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-18T23:34:45.698590+00:00",
+  "title": "Design System: Gestión neutral",
+  "extensions": {
+    "motion": [
+      {
+        "name": "theme-fade",
+        "value": "550ms ease-in-out",
+        "purpose": "Cambio de tema; inmediato con movimiento reducido"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile",
+        "value": "700px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Acción principal",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Guardar o confirmar una operación",
+      "html": "<button class=\"action\">Guardar</button>",
+      "css": ".action { background:#3e3e3e;color:#fff;border:0;border-radius:12px;padding:12px 20px;min-height:46px;font:550 13px Arial,sans-serif; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Gestión neutral",
+    "overview": "Interfaz operativa acromática que conserva las funciones de clientes, consumos e inventario.",
+    "keyCharacteristics": [
+      "Grises",
+      "Acceso directo por rol",
+      "Tipografía sans",
+      "Sin identidad comercial"
+    ],
+    "rules": [],
+    "dos": [
+      "Mantener contraste y estados legibles",
+      "Conservar colores reales de productos"
+    ],
+    "donts": [
+      "Reintroducir marca o copas decorativas",
+      "Solicitar contraseñas al elegir perfil"
+    ]
+  }
+}

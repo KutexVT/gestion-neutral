@@ -1,0 +1,7 @@
+services:
+  app:
+    environment:
+      NODE_ENV: production
+      SECURE_COOKIES: 'true'
+      APP_ORIGIN: https://${DOMAIN}
+      TRUST_PROXY: 'true'
