@@ -61,3 +61,18 @@ Las pruebas crean y eliminan bases temporales `bar_test_*` en el PostgreSQL conf
 ## Copias de seguridad
 
 `scripts/backup.sh` guarda la base local de esta copia en `backups/`. `scripts/restore.sh --replace archivo.dump` reemplaza la base de esta copia y revoca sus sesiones. Ambos usan su proyecto Docker propio.
+
+## Railway
+
+Proyecto independiente: `gestion-neutral`. Servicio web: `gestion`. Base persistente: `Postgres`.
+
+URL: https://gestion-production-4635.up.railway.app
+
+La aplicación se despliega desde esta carpeta. Para subir cambios después de probarlos:
+
+```sh
+railway link --project 40091934-e9fc-4237-8118-b733bcc74872 --environment production --service gestion
+railway up --service gestion --detach
+```
+
+Railway guarda `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `APP_ORIGIN` con la URL pública, `SECURE_COOKIES=true`, `NODE_ENV=production`, `HOST=0.0.0.0` y `PORT=3182`. El servicio tiene healthcheck `/api/health` y reinicio ante fallos. Docker aplica las migraciones al iniciar. No subir `.env` ni conectar esta copia a la base de la aplicación original. La base de Railway es independiente de la base local y empieza con sus propios perfiles Dueño y Mesero.
