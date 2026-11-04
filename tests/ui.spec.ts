@@ -53,6 +53,11 @@ test("servicio completo con tres sesiones y factura móvil", async ({
     await login(owner, "dueno");
     await login(ana, "ana");
     await login(leo, "leo");
+    for (const waiter of [ana, leo]) {
+      for (const name of ["Inventario", "Sumar existencias", "Nuevo producto"])
+        await expect(waiter.getByRole("button", { name, exact: true })).toHaveCount(0);
+      await expect(waiter.getByRole("textbox", { name: "Buscar en inventario", exact: true })).toHaveCount(0);
+    }
     await expect(
       owner.getByRole("heading", { name: "Camila Rojas", exact: true }),
     ).toBeVisible();

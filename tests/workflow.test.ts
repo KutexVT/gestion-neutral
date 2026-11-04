@@ -162,6 +162,33 @@ test("selección de perfil, roles, CSRF y validación de entradas", async () => 
   );
 });
 
+test("meseros solo cambian existencias mediante consumos y nunca por ajustes directos", async () => {
+  const p = await product(80);
+  for (const actor of [first, second]) {
+    const before = await pool.query("SELECT count(*) FROM stock_moves WHERE product_id=$1", [p.id]);
+    for (const [method, route, payload] of [
+      ["PATCH", `/products/${p.id}`, { ...p, stock: 100 }],
+      ["POST", `/products/${p.id}/stock`, { quantity: 20 }],
+      ["POST", "/products", { name: "Sin permiso", photo_id: photo, price: 100, stock: 100 }],
+    ] as const) {
+      const response = await request(actor, method, route, payload);
+      assert.equal(response.statusCode, 403, response.body);
+      assert.equal(await stock(p.id), 80);
+    }
+    const after = await pool.query("SELECT count(*) FROM stock_moves WHERE product_id=$1", [p.id]);
+    assert.deepEqual(after.rows, before.rows);
+  }
+  const a = await customer();
+  const result = await ok(first, "POST", `/accounts/${a.id}/consumption`, {
+    version: 1, add: [{ product_id: p.id, quantity: 2 }],
+  });
+  assert.equal(await stock(p.id), 78);
+  await ok(first, "POST", `/accounts/${a.id}/consumption`, {
+    version: result.account.version, set: [{ id: result.account.items[0].id, quantity: 1 }],
+  });
+  assert.equal(await stock(p.id), 79);
+});
+
 test("corrección de consumo aplica exactamente la diferencia; precio y autor quedan guardados", async () => {
   const p = await product(10);
   const a = await customer();

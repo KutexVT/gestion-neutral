@@ -373,12 +373,12 @@ function App() {
             {["clients", "others", "closed"].includes(screen) && (
               <Customers screen={screen} />
             )}
-            {screen === "products" && <Products />}
-            {screen === "team" && <Team />}
-            {screen === "audit" && <AuditPage />}
+            {admin && screen === "products" && <Products />}
+            {admin && screen === "team" && <Team />}
+            {admin && screen === "audit" && <AuditPage />}
             {screen === "personal" && <Personal />}
             {screen === "sales" && <SalesPage />}
-            {screen === "cash" && <SalesPage cashFlow />}
+            {admin && screen === "cash" && <SalesPage cashFlow />}
           </div>
           <footer className="page-footer">
             <span>Gestión de clientes e inventario</span>
@@ -396,11 +396,11 @@ function App() {
           close={() => setOverlay(null)}
         />
       )}
-      {overlay?.type === "stock" && <StockForm close={() => setOverlay(null)} />}
-      {overlay?.type === "product" && (
+      {admin && overlay?.type === "stock" && <StockForm close={() => setOverlay(null)} />}
+      {admin && overlay?.type === "product" && (
         <ProductForm product={overlay.product} close={() => setOverlay(null)} />
       )}
-      {overlay?.type === "user" && <UserForm close={() => setOverlay(null)} />}
+      {admin && overlay?.type === "user" && <UserForm close={() => setOverlay(null)} />}
       {notice && (
         <Toast
           key={`${notice}:${overlay?.type}`}
