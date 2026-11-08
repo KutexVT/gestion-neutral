@@ -1,4 +1,4 @@
-import { Banknote, Coins, RotateCcw } from "lucide-react";
+import { Banknote, Coins, RotateCcw, Minus, Plus } from "lucide-react";
 import { cashGroups, cashMoney, cashQuantity, cashTotal, type CashCounts } from "./cash-count";
 import "./cash-counter.css";
 
@@ -26,11 +26,19 @@ export function CashCounter({ counts, onChange }: { counts: CashCounts; onChange
             const errorId = `cash-error-${value}`;
             return <div className="cash-row" key={value}>
               <strong>{cashMoney(value)}</strong>
+              <div className="stepper cash-stepper">
+                <button type="button" aria-label={`Quitar ${index === 0 ? "un billete" : "una moneda"} de ₡${value}`}
+                  disabled={quantity === null || quantity === 0}
+                  onClick={() => onChange({ ...counts, [value]: String(quantity! - 1) })}><Minus size={17} aria-hidden="true" /></button>
               <input type="text" inputMode="numeric" pattern="[0-9]*"
                 aria-label={`Cantidad de ${group.singular} de ₡${value}`} placeholder="0" autoComplete="off"
                 value={counts[value] ?? ""} aria-invalid={quantity === null}
                 aria-describedby={quantity === null ? errorId : undefined}
                 onChange={event => onChange({ ...counts, [value]: event.target.value })} />
+                <button type="button" aria-label={`Agregar ${index === 0 ? "un billete" : "una moneda"} de ₡${value}`}
+                  disabled={quantity === null || quantity >= 1000000}
+                  onClick={() => onChange({ ...counts, [value]: String(quantity! + 1) })}><Plus size={17} aria-hidden="true" /></button>
+              </div>
               <span className="cash-row-total">{quantity === null ? "—" : cashMoney(value * quantity)}</span>
               {quantity === null && <p className="cash-error" id={errorId}>Usa un número entero de 0 a 1 000 000</p>}
             </div>;

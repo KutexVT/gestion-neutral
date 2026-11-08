@@ -550,16 +550,35 @@ test("contador de efectivo para dueño y mesero: sumas, validación y reinicio",
       const total = page.getByLabel("Total contado", { exact: true });
       const coins = page.getByRole("textbox", { name: "Cantidad de monedas de ₡500", exact: true });
       await expect(total).toHaveText(format(0));
+      const addCoin = page.getByRole("button", { name: "Agregar una moneda de ₡500", exact: true });
+      const removeCoin = page.getByRole("button", { name: "Quitar una moneda de ₡500", exact: true });
+      await expect(removeCoin).toBeDisabled();
+      await addCoin.click(); await addCoin.click(); await addCoin.click();
+      await expect(coins).toHaveValue("3");
+      await expect(total).toHaveText(format(1500));
+      await removeCoin.click();
+      await expect(total).toHaveText(format(1000));
+      await addCoin.click();
+      await coins.fill("1000000");
+      await expect(addCoin).toBeDisabled();
+      await removeCoin.click();
+      await expect(coins).toHaveValue("999999");
       await coins.fill("3");
       await expect(total).toHaveText(format(1500));
       await page.getByRole("textbox", { name: "Cantidad de billetes de ₡10000", exact: true }).fill("2");
       await page.getByRole("textbox", { name: "Cantidad de monedas de ₡25", exact: true }).fill("4");
+      await expect(total).toHaveText(format(21600));
+      await page.getByRole("button", { name: "Agregar un billete de ₡10000", exact: true }).click();
+      await expect(total).toHaveText(format(31600));
+      await page.getByRole("button", { name: "Quitar un billete de ₡10000", exact: true }).click();
       await expect(total).toHaveText(format(21600));
       await expect(page.getByLabel("Total en billetes", { exact: true })).toHaveText(format(20000));
       await expect(page.getByLabel("Total en monedas", { exact: true })).toHaveText(format(1600));
       for (const invalid of ["-1", "1.5", "1e3", "1000001", "10000000"]) {
         await coins.fill(invalid);
         await expect(coins).toHaveAttribute("aria-invalid", "true");
+        await expect(addCoin).toBeDisabled();
+        await expect(removeCoin).toBeDisabled();
         await expect(total).toHaveText("Revisa las cantidades");
       }
       await coins.fill("3");
@@ -570,6 +589,14 @@ test("contador de efectivo para dueño y mesero: sumas, validación y reinicio",
       await page.screenshot({ path: `test-artifacts/screenshots/efectivo-${username}-claro.png`, fullPage: true });
       await page.getByRole("button", { name: "Cambiar a modo oscuro", exact: true }).click();
       await page.screenshot({ path: `test-artifacts/screenshots/efectivo-${username}-oscuro.png`, fullPage: true });
+      for (const narrowWidth of [1024, 390, 320]) {
+        await page.setViewportSize({ width: narrowWidth, height: 844 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      }
+      const size = await addCoin.boundingBox();
+      expect(size!.width).toBeGreaterThanOrEqual(44);
+      expect(size!.height).toBeGreaterThanOrEqual(44);
+      await page.screenshot({ path: `test-artifacts/screenshots/efectivo-${username}-estrecho.png`, fullPage: true });
       await page.getByRole("button", { name: "Limpiar conteo", exact: true }).click();
       await expect(total).toHaveText(format(0));
       await expect(coins).toHaveValue("");
