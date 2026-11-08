@@ -76,3 +76,9 @@ railway up --service gestion --detach
 ```
 
 Railway guarda `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `APP_ORIGIN` con la URL pública, `SECURE_COOKIES=true`, `NODE_ENV=production`, `HOST=0.0.0.0` y `PORT=3182`. El servicio tiene healthcheck `/api/health` y reinicio ante fallos. Docker aplica las migraciones al iniciar. No subir `.env` ni conectar esta copia a la base de la aplicación original. La base de Railway es independiente de la base local y empieza con sus propios perfiles Dueño y Mesero.
+
+## Contar efectivo
+
+Dueño y meseros tienen la herramienta **Contar efectivo**. Indica cantidades enteras para billetes de ₡1 000, ₡2 000, ₡5 000, ₡10 000 y ₡20 000 y monedas de ₡10, ₡25, ₡50, ₡100 y ₡500. Muestra subtotales por denominación, por tipo y un total en CRC. Las denominaciones corresponden a las listas actuales del BCCR: [billetes](https://www.bccr.fi.cr/cr/es/billetes-y-monedas/billetes/billetes-en-circulacion.html) y [monedas](https://www.bccr.fi.cr/cr/es/billetes-y-monedas/monedas/denominacion-de-monedas.html).
+
+Es una calculadora independiente: no registra ventas ni movimientos de inventario. Conserva el conteo al navegar dentro de la sesión; recargar o cambiar de perfil lo limpia. **Limpiar conteo** permite comenzar otro. Cantidades negativas, fracciones o mayores de 1 000 000 muestran un error y bloquean el total para evitar una suma parcial.

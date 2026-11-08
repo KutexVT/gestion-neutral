@@ -535,3 +535,50 @@ test("tema persistente con fundido suave en móvil", async ({ page }) => {
   expect(await page.locator(".customer-card").first().evaluate(el => getComputedStyle(el).transitionDuration)).toContain("0.55s");
   await expect(page.locator("html")).not.toHaveClass("theme-changing");
 });
+
+test("contador de efectivo para dueño y mesero: sumas, validación y reinicio", async ({ browser }) => {
+  const format = (value: number) => new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC", maximumFractionDigits: 0 }).format(value);
+  await mkdir("test-artifacts/screenshots", { recursive: true });
+  for (const [username, width] of [["dueno", 1440], ["leo", 390]] as const) {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 }, colorScheme: "light", reducedMotion: "reduce" });
+    const page = await context.newPage();
+    try {
+      await login(page, username);
+      const writes: string[] = [];
+      page.on("request", request => { if (["POST", "PATCH", "DELETE"].includes(request.method())) writes.push(request.url()); });
+      await page.getByRole("button", { name: "Contar efectivo", exact: true }).click();
+      const total = page.getByLabel("Total contado", { exact: true });
+      const coins = page.getByRole("textbox", { name: "Cantidad de monedas de ₡500", exact: true });
+      await expect(total).toHaveText(format(0));
+      await coins.fill("3");
+      await expect(total).toHaveText(format(1500));
+      await page.getByRole("textbox", { name: "Cantidad de billetes de ₡10000", exact: true }).fill("2");
+      await page.getByRole("textbox", { name: "Cantidad de monedas de ₡25", exact: true }).fill("4");
+      await expect(total).toHaveText(format(21600));
+      await expect(page.getByLabel("Total en billetes", { exact: true })).toHaveText(format(20000));
+      await expect(page.getByLabel("Total en monedas", { exact: true })).toHaveText(format(1600));
+      for (const invalid of ["-1", "1.5", "1e3", "1000001"]) {
+        await coins.fill(invalid);
+        await expect(coins).toHaveAttribute("aria-invalid", "true");
+        await expect(total).toHaveText("Revisa las cantidades");
+      }
+      await coins.fill("3");
+      await page.getByRole("button", { name: username === "dueno" ? "Clientes" : "Mis clientes", exact: true }).click();
+      await page.getByRole("button", { name: "Contar efectivo", exact: true }).click();
+      await expect(total).toHaveText(format(21600));
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `test-artifacts/screenshots/efectivo-${username}-claro.png`, fullPage: true });
+      await page.getByRole("button", { name: "Cambiar a modo oscuro", exact: true }).click();
+      await page.screenshot({ path: `test-artifacts/screenshots/efectivo-${username}-oscuro.png`, fullPage: true });
+      await page.getByRole("button", { name: "Limpiar conteo", exact: true }).click();
+      await expect(total).toHaveText(format(0));
+      await expect(coins).toHaveValue("");
+      await expect(page.getByRole("button", { name: "Limpiar conteo", exact: true })).toBeDisabled();
+      await coins.fill("3");
+      await page.reload();
+      await page.getByRole("button", { name: "Contar efectivo", exact: true }).click();
+      await expect(total).toHaveText(format(0));
+      expect(writes).toEqual([]);
+    } finally { await context.close(); }
+  }
+});

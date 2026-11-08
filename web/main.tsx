@@ -17,6 +17,7 @@ import {
   ClipboardList,
   Clock3,
   CreditCard,
+  Calculator,
   History,
   LayoutDashboard,
   LogOut,
@@ -55,6 +56,8 @@ import { Empty, ErrorBox, Loading, Modal, Submit, Toast } from "./ui";
 import "./style.css";
 import { ThemeToggle } from "./theme";
 import { HistoryValue } from "./history";
+import { CashCounter } from "./cash-counter";
+import type { CashCounts } from "./cash-count";
 
 type Session = { user: User; csrf: string; config: Config };
 type Overlay =
@@ -167,6 +170,7 @@ function App() {
   const [startError, setStartError] = useState("");
   const [revision, setRevision] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [cashCounts, setCashCounts] = useState<CashCounts>({});
   const [screen, setScreen] = useState("clients");
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [notice, setNotice] = useState("");
@@ -178,6 +182,7 @@ function App() {
     timer.current = setTimeout(() => setNotice(""), 4500);
   };
   const login = (value: Session) => {
+    setCashCounts({});
     setSession(value);
     setCsrf(value.csrf);
     setScreen("clients");
@@ -262,6 +267,7 @@ function App() {
         { id: "cash", label: "Flujo de efectivo", icon: CreditCard },
         { id: "team", label: "Equipo", icon: Users },
         { id: "audit", label: "Historial", icon: History },
+        { id: "cash-count", label: "Contar efectivo", icon: Calculator },
       ]
     : [
         { id: "clients", label: "Mis clientes", icon: LayoutDashboard },
@@ -269,6 +275,7 @@ function App() {
         { id: "personal", label: "Mi consumo", icon: ClipboardList },
         { id: "closed", label: "Cerradas", icon: ReceiptText },
         { id: "sales", label: "Mis ventas", icon: CreditCard },
+        { id: "cash-count", label: "Contar efectivo", icon: Calculator },
       ];
   async function logout() {
     try {
@@ -378,6 +385,7 @@ function App() {
             {admin && screen === "audit" && <AuditPage />}
             {screen === "personal" && <Personal />}
             {screen === "sales" && <SalesPage />}
+            {screen === "cash-count" && <CashCounter counts={cashCounts} onChange={setCashCounts} />}
             {admin && screen === "cash" && <SalesPage cashFlow />}
           </div>
           <footer className="page-footer">
