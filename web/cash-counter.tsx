@@ -26,7 +26,7 @@ export function CashCounter({ counts, onChange }: { counts: CashCounts; onChange
             const errorId = `cash-error-${value}`;
             return <div className="cash-row" key={value}>
               <strong>{cashMoney(value)}</strong>
-              <input type="text" inputMode="numeric" pattern="[0-9]*" maxLength={7}
+              <input type="text" inputMode="numeric" pattern="[0-9]*"
                 aria-label={`Cantidad de ${group.singular} de ₡${value}`} placeholder="0" autoComplete="off"
                 value={counts[value] ?? ""} aria-invalid={quantity === null}
                 aria-describedby={quantity === null ? errorId : undefined}

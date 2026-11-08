@@ -557,7 +557,7 @@ test("contador de efectivo para dueño y mesero: sumas, validación y reinicio",
       await expect(total).toHaveText(format(21600));
       await expect(page.getByLabel("Total en billetes", { exact: true })).toHaveText(format(20000));
       await expect(page.getByLabel("Total en monedas", { exact: true })).toHaveText(format(1600));
-      for (const invalid of ["-1", "1.5", "1e3", "1000001"]) {
+      for (const invalid of ["-1", "1.5", "1e3", "1000001", "10000000"]) {
         await coins.fill(invalid);
         await expect(coins).toHaveAttribute("aria-invalid", "true");
         await expect(total).toHaveText("Revisa las cantidades");

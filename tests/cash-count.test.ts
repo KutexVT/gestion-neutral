@@ -10,7 +10,7 @@ test("efectivo CRC: cantidades, mezcla de denominaciones y ceros", () => {
   assert.equal(cashQuantity("0003"), 3);
 });
 test("efectivo CRC: una cantidad inválida impide mostrar un total parcial", () => {
-  for (const value of ["-1", "1.5", "1e3", "1000001", "abc", "Infinity", " 3 "]) {
+  for (const value of ["-1", "1.5", "1e3", "1000001", "10000000", "abc", "Infinity", " 3 "]) {
     assert.equal(cashQuantity(value), null, value);
     assert.equal(cashTotal(all, { 500: "3", 1000: value }), null, value);
   }
