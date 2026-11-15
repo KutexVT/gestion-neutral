@@ -56,6 +56,8 @@ import { Empty, ErrorBox, Loading, Modal, Submit, Toast } from "./ui";
 import "./style.css";
 import { ThemeToggle } from "./theme";
 import { HistoryValue } from "./history";
+import { PaymentFields, PaymentCorrection, newPayment, readPayment, paymentNames, type Payments } from "./payments";
+import { CashRegister } from "./register";
 import { CashCounter } from "./cash-counter";
 import type { CashCounts } from "./cash-count";
 
@@ -265,6 +267,7 @@ function App() {
         { id: "clients", label: "Clientes", icon: LayoutDashboard },
         { id: "products", label: "Inventario", icon: Package },
         { id: "cash", label: "Flujo de efectivo", icon: CreditCard },
+        { id: "register", label: "Cierre de caja", icon: ReceiptText },
         { id: "team", label: "Equipo", icon: Users },
         { id: "audit", label: "Historial", icon: History },
         { id: "cash-count", label: "Contar efectivo", icon: Calculator },
@@ -385,7 +388,8 @@ function App() {
             {admin && screen === "audit" && <AuditPage />}
             {screen === "personal" && <Personal />}
             {screen === "sales" && <SalesPage />}
-            {screen === "cash-count" && <CashCounter counts={cashCounts} onChange={setCashCounts} />}
+            {screen === "cash-count" && <><CashCounter counts={cashCounts} onChange={setCashCounts} />{admin && <button className="btn primary" onClick={() => setScreen("register")}>Ir a cierre de caja con este conteo</button>}</>}
+            {admin && screen === "register" && <CashRegister config={config} revision={revision} counts={cashCounts} setCounts={setCashCounts} openAccount={id => setOverlay({ type: "account", id, tab: "close" })} />}
             {admin && screen === "cash" && <SalesPage cashFlow />}
           </div>
           <footer className="page-footer">
@@ -1246,18 +1250,17 @@ function Checkout({ account }: { account: Account }) {
   const [price, setPrice] = useState(
     (account.calculated_total / 100).toFixed(2),
   );
-  const [cash, setCash] = useState<string | null>(null);
+  const [payment, setPayment] = useState(newPayment);
   let due: number | null = null;
-  let change: number | null = null;
   try {
     due = override ? parseMoney(price) : account.calculated_total;
-    change = parseMoney(cash ?? (due / 100).toFixed(2)) - due;
   } catch {}
   const [confirmation, setConfirmation] = useState<{
     version: number;
     final: number | null;
     received: number;
     change: number;
+    payments: Payments;
   } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1267,17 +1270,8 @@ function Checkout({ account }: { account: Account }) {
     try {
       if (!confirmation) {
         const total = override ? parseMoney(price) : account.calculated_total;
-        const received = parseMoney(cash ?? (total / 100).toFixed(2));
-        if (received < total)
-          throw new Error(
-            "El efectivo recibido no alcanza para pagar la cuenta",
-          );
-        setConfirmation({
-          version: account.version,
-          final: override ? total : null,
-          received,
-          change: received - total,
-        });
+        const result = readPayment(total, payment);
+        setConfirmation({ version: account.version, final: override ? total : null, ...result });
         return;
       }
       setBusy(true);
@@ -1285,6 +1279,7 @@ function Checkout({ account }: { account: Account }) {
         version: confirmation.version,
         final_total: confirmation.final,
         cash_received: confirmation.received,
+        payments: confirmation.payments,
         confirmed: true,
       });
       refresh();
@@ -1356,28 +1351,13 @@ function Checkout({ account }: { account: Account }) {
               />
             </label>
           )}
-          <label>
-            Efectivo recibido ({account.currency})
-            <input
-              inputMode="decimal"
-              required
-              value={cash ?? (due === null ? "" : (due / 100).toFixed(2))}
-              onChange={(e) => setCash(e.target.value)}
-            />
-          </label>
-          <div className="totals" aria-live="polite">
-            <span>Vuelto</span>
-            <strong>
-              {change !== null && change >= 0
-                ? money(change, account.currency)
-                : "El efectivo no alcanza o el importe es inválido"}
-            </strong>
-          </div>
+          <PaymentFields total={due ?? 0} currency={account.currency} draft={payment} onChange={setPayment} />
         </>
       ) : (
         <div className="confirmation">
           <ShieldCheck size={22} />
           <h4>Confirmar cierre de cuenta</h4>
+          <p>{Object.entries(confirmation.payments).filter(([,value]) => value > 0).map(([method,value]) => <span key={method}>{paymentNames[method as keyof Payments]}: {money(value,account.currency)}<br /></span>)}</p>
           <p>
             Efectivo recibido: {money(confirmation.received, account.currency)}
             <br />
@@ -1416,7 +1396,7 @@ function Receipt({ account }: { account: Account }) {
   useEffect(() => {
     receiptRef.current?.closest("dialog")?.scrollTo(0, 0);
   }, []);
-  const { config, user } = useApp();
+  const { config, user, refresh } = useApp();
   const [chosen, setChosen] = useState<number | null>(null);
   const [edit, setEdit] = useState(false);
   const inv =
@@ -1493,6 +1473,9 @@ function Receipt({ account }: { account: Account }) {
             <span>TOTAL</span>
             <strong>{money(s.final_total!, s.currency)}</strong>
           </div>
+          {s.payment_cash != null && <div className="receipt-meta receipt-methods">
+            {(["cash","sinpe","card"] as const).map(method => <div key={method}><span>{paymentNames[method]}</span><span>{money(s[`payment_${method}`] ?? 0,s.currency)}</span></div>)}
+          </div>}
           {s.cash_received != null && (
             <div className="receipt-meta receipt-payment">
               <div>
@@ -1518,6 +1501,7 @@ function Receipt({ account }: { account: Account }) {
       </div>
       {user.role === "admin" && (
         <div className="receipt-admin">
+          <PaymentCorrection account={account} saved={refresh} />
           <p>
             Calculado:{" "}
             <strong>{money(account.calculated_total, account.currency)}</strong>{" "}
@@ -2376,7 +2360,10 @@ type SalesReport = {
     calculated: number;
     received: number;
     change: number;
+    payments: Payments;
     cash_net: number;
+    sinpe_net: number;
+    card_net: number;
     unrecorded: number;
   }[];
   daily: {
@@ -2385,6 +2372,8 @@ type SalesReport = {
     accounts: number;
     total: number;
     cash_net: number;
+    sinpe_net: number;
+    card_net: number;
   }[];
   sellers: {
     id: string;
@@ -2393,6 +2382,8 @@ type SalesReport = {
     accounts: number;
     total: number;
     cash_net: number;
+    sinpe_net: number;
+    card_net: number;
   }[];
   rows: {
     id: string;
@@ -2471,6 +2462,8 @@ function SalesPage({
                     <dt>Efectivo neto registrado</dt>
                     <dd>{money(total.cash_net, total.currency)}</dd>
                   </div>
+                  <div><dt>SINPE registrado</dt><dd>{money(total.sinpe_net,total.currency)}</dd></div>
+                  <div><dt>Tarjeta registrada</dt><dd>{money(total.card_net,total.currency)}</dd></div>
                 </dl>
                 {total.unrecorded > 0 && (
                   <p className="muted">
@@ -2497,7 +2490,7 @@ function SalesPage({
                         <th>Fecha de cobro</th>
                         <th>Cuentas</th>
                         <th>Ventas</th>
-                        <th>Efectivo neto</th>
+                        <th>Efectivo neto</th><th>SINPE</th><th>Tarjeta</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2506,7 +2499,7 @@ function SalesPage({
                           <td>{row.day.split("-").reverse().join("/")}</td>
                           <td>{row.accounts}</td>
                           <td>{money(row.total, row.currency)}</td>
-                          <td>{money(row.cash_net, row.currency)}</td>
+                          <td>{money(row.cash_net, row.currency)}</td><td>{money(row.sinpe_net,row.currency)}</td><td>{money(row.card_net,row.currency)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2522,7 +2515,7 @@ function SalesPage({
                         <th>Vendedor que cobró</th>
                         <th>Cuentas</th>
                         <th>Ventas</th>
-                        <th>Efectivo neto</th>
+                        <th>Efectivo neto</th><th>SINPE</th><th>Tarjeta</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2531,7 +2524,7 @@ function SalesPage({
                           <td>{row.name}</td>
                           <td>{row.accounts}</td>
                           <td>{money(row.total, row.currency)}</td>
-                          <td>{money(row.cash_net, row.currency)}</td>
+                          <td>{money(row.cash_net, row.currency)}</td><td>{money(row.sinpe_net,row.currency)}</td><td>{money(row.card_net,row.currency)}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -39,6 +39,9 @@ export type Account = {
   closed_at: string | null;
   calculated_total: number;
   final_total: number | null;
+  payment_cash: number | null;
+  payment_sinpe: number | null;
+  payment_card: number | null;
   cash_received: number | null;
   cash_change: number | null;
   adjusted_by_name?: string;

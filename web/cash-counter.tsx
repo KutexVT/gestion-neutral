@@ -2,17 +2,17 @@ import { Banknote, Coins, RotateCcw, Minus, Plus } from "lucide-react";
 import { cashGroups, cashMoney, cashQuantity, cashTotal, type CashCounts } from "./cash-count";
 import "./cash-counter.css";
 
-export function CashCounter({ counts, onChange }: { counts: CashCounts; onChange: (counts: CashCounts) => void }) {
+export function CashCounter({ counts, onChange, embedded = false }: { counts: CashCounts; onChange: (counts: CashCounts) => void; embedded?: boolean }) {
   const total = cashTotal(cashGroups.flatMap(group => [...group.values]), counts);
   return <section className="cash-counter" aria-labelledby="cash-heading">
     <header className="cash-heading">
-      <div><h1 id="cash-heading">Contar efectivo</h1><p>Indica cuántos billetes y monedas tienes. El total se calcula al momento.</p></div>
-      <button className="btn secondary" disabled={!Object.values(counts).some(Boolean)} onClick={() => onChange({})}><RotateCcw size={17} /> Limpiar conteo</button>
+      <div>{embedded ? <h2 id="cash-heading">Contar efectivo de la caja</h2> : <h1 id="cash-heading">Contar efectivo</h1>}<p>Indica cuántos billetes y monedas tienes. El total se calcula al momento.</p></div>
+      <button type="button" className="btn secondary" disabled={!Object.values(counts).some(Boolean)} onClick={() => onChange({})}><RotateCcw size={17} /> Limpiar conteo</button>
     </header>
     <div className="cash-count-summary" role="status" aria-live="polite" aria-atomic="true">
       <span>Total contado</span>
       <output aria-label="Total contado">{total === null ? "Revisa las cantidades" : cashMoney(total)}</output>
-      <small>Conteo independiente de las ventas · Colones costarricenses</small>
+      <small>{embedded ? "Incluye todo el efectivo de la caja y el fondo inicial" : "Conteo independiente de las ventas · Colones costarricenses"}</small>
     </div>
     <div className="cash-groups">
       {cashGroups.map((group, index) => {
@@ -47,6 +47,6 @@ export function CashCounter({ counts, onChange }: { counts: CashCounts; onChange
         </section>;
       })}
     </div>
-    <p className="cash-note">El conteo se conserva al cambiar de sección. Al recargar la página o cambiar de perfil empieza en cero.</p>
+    {!embedded && <p className="cash-note">El conteo se conserva al cambiar de sección. Al recargar la página o cambiar de perfil empieza en cero.</p>}
   </section>;
 }

@@ -3,6 +3,13 @@ import type { Config } from "./types";
 
 const labels: Record<string, string> = {
   id: "Referencia",
+  payments: "Pagos", payment_cash: "Efectivo aplicado", payment_sinpe: "SINPE aplicado", payment_card: "Tarjeta aplicada",
+  cash: "Efectivo", sinpe: "SINPE", card: "Tarjeta", paid_at: "Fecha del cobro original",
+  reason: "Motivo", method: "Medio", direction: "Tipo de movimiento", amount: "Importe",
+  occurred_at: "Fecha del movimiento", actor_id: "Usuario", reverses: "Movimiento anulado",
+  period: "Intervalo", from: "Desde", to: "Hasta", opening: "Fondo inicial",
+  actual_cash: "Efectivo contado", expected_cash: "Efectivo esperado", difference_cash: "Diferencia en efectivo",
+  day_start: "Inicio del día", opening_default: "Fondo habitual", supersedes: "Cierre anterior", account: "Cuenta",
   username: "Usuario",
   name: "Nombre",
   role: "Rol",
@@ -110,7 +117,8 @@ export function HistoryValue({
       "calculated_total",
       "final_total",
       "cash_received",
-      "cash_change",
+      "cash_change", "payment_cash", "payment_sinpe", "payment_card", "cash", "sinpe", "card",
+      "amount", "opening", "actual_cash", "expected_cash", "difference_cash", "opening_default",
     ].includes(field)
   )
     text = money(value, currency);
@@ -118,6 +126,8 @@ export function HistoryValue({
     text = date(value, config.timezone);
   if (field === "kind")
     text = value === "personal" ? "Consumo personal" : "Cliente";
+  if (field === "method") text = ({cash:"Efectivo",sinpe:"SINPE",card:"Tarjeta"} as Record<string,string>)[text] || text;
+  if (field === "direction") text = value === "in" ? "Entrada" : "Salida";
   if (field === "role") text = value === "admin" ? "Dueño" : "Mesero";
   return <span>{text}</span>;
 }

@@ -360,6 +360,26 @@ export async function editAccount(
   return result;
 }
 
+export const paymentSchema = z.object({ cash: amount, sinpe: amount, card: amount }).strict();
+
+export async function correctPayment(db: DB, actor: Actor, id: string, input: unknown) {
+  need(actor.role === "admin", 403, "Solo el dueño puede corregir pagos");
+  const body = z.object({ version, payments: paymentSchema, cash_received: amount,
+    reason: z.string().trim().min(3).max(500) }).strict().parse(input);
+  const before = await lock(db, id, body.version, actor, true);
+  need(before.closed_at, 400, "Primero finaliza la cuenta");
+  need(body.cash_received >= body.payments.cash, 400, "El efectivo recibido no alcanza");
+  need(Number.isSafeInteger(body.payments.cash + body.payments.sinpe + body.payments.card), 400, "Importe fuera de rango");
+  await db.query(`UPDATE accounts SET payment_cash=$2,payment_sinpe=$3,payment_card=$4,
+    cash_received=$5,cash_change=$6,version=version+1 WHERE id=$1`,
+    [id, body.payments.cash, body.payments.sinpe, body.payments.card, body.cash_received, body.cash_received-body.payments.cash]);
+  await invoice(db, id, actor);
+  const result = await detail(db, id, actor);
+  await audit(db, actor.id, "Pago corregido", id, before, { ...body, account: { ...result, invoices: undefined } });
+  await changed(db, "all");
+  return result;
+}
+
 export async function closeAccount(
   db: DB,
   actor: Actor,
@@ -372,6 +392,7 @@ export async function closeAccount(
       final_total: amount.nullable(),
       confirmed: z.literal(true),
       cash_received: amount.optional(),
+      payments: paymentSchema.optional(),
     })
     .strict()
     .parse(input);
@@ -382,21 +403,26 @@ export async function closeAccount(
     "Esta cuenta ya está cerrada o es un consumo personal",
   );
   const finalTotal = body.final_total ?? account.calculated_total;
-  const received = body.cash_received ?? finalTotal;
+  const payments = body.payments ?? { cash: finalTotal, sinpe: 0, card: 0 };
+  need(payments.cash + payments.sinpe + payments.card === finalTotal, 400,
+    "La suma de efectivo, SINPE y tarjeta debe ser igual al total final");
+  const received = body.cash_received ?? payments.cash;
   need(
-    received >= finalTotal,
+    received >= payments.cash,
     400,
     "El efectivo recibido no alcanza para pagar la cuenta",
   );
   await db.query(
-    `UPDATE accounts SET closed_at=now(),closed_by=$2,final_total=$3,adjusted_by=$4,cash_received=$5,cash_change=$6,version=version+1 WHERE id=$1`,
+    `UPDATE accounts SET closed_at=clock_timestamp(),paid_at=clock_timestamp(),closed_by=$2,final_total=$3,adjusted_by=$4,cash_received=$5,cash_change=$6,
+      payment_cash=$7,payment_sinpe=$8,payment_card=$9,version=version+1 WHERE id=$1`,
     [
       id,
       actor.id,
       body.final_total ?? account.calculated_total,
       body.final_total === null ? null : actor.id,
       received,
-      received - finalTotal,
+      received - payments.cash,
+      payments.cash, payments.sinpe, payments.card,
     ],
   );
   await invoice(db, id, actor);

@@ -34,8 +34,10 @@ import {
   editAccount,
   closeAccount,
   changeFinal,
+  correctPayment,
 } from "./accounts.js";
 
+import { registerCash, lockRegister } from "./register.js";
 import { registerReports, reportFilters } from "./reports.js";
 
 declare module "fastify" {
@@ -181,7 +183,10 @@ export async function buildApp({ logging = true, events = true } = {}) {
       digest(
         `${request.method}:${request.url}:${JSON.stringify(request.body ?? null)}`,
       ),
-      (db) => fn(db, request.actor!),
+      async (db) => {
+        if (/^\/api\/(accounts|personal|register)(\/|$|\?)/.test(request.url)) await lockRegister(db);
+        return fn(db, request.actor!);
+      },
     );
 
   app.get("/api/health", async () => {
@@ -484,6 +489,11 @@ export async function buildApp({ logging = true, events = true } = {}) {
     });
   });
   registerReports(app);
+  registerCash(app, write);
+  app.patch("/api/accounts/:id/payments", request => {
+    admin(request);
+    return write(request, (db, actor) => correctPayment(db, actor, resourceId(request), request.body));
+  });
   app.get("/api/audit", async (request) => {
     admin(request);
     const q = z

@@ -865,6 +865,123 @@ test("entradas de inventario suman sin perder ventas concurrentes y protegen el 
   assert.equal(logs.length, 3);
 });
 
+test("cierre de caja: pagos mixtos, conteo, movimientos, permisos e historia inmutable", async () => {
+  const from = (await pool.query("SELECT clock_timestamp() AS t")).rows[0].t.toISOString();
+  const a = await customer(first);
+  const invalid = await request(first, "POST", `/accounts/${a.id}/close`, {
+    version: 1, final_total: 10000000, confirmed: true, cash_received: 1000000,
+    payments: {cash: 1000000,sinpe: 8000000,card: 0},
+  });
+  assert.equal(invalid.statusCode, 400);
+  assert.equal((await account(a.id)).closed_at, null);
+  let paid = await ok(first, "POST", `/accounts/${a.id}/close`, {
+    version: 1, final_total: 10000000, confirmed: true, cash_received: 2000000,
+    payments: {cash: 1000000,sinpe: 8000000,card: 1000000},
+  });
+  assert.equal(paid.cash_change, 1000000);
+  assert.equal(paid.invoices[0].snapshot.payment_sinpe, 8000000);
+  for (const [method,path,payload] of [
+    ["GET","/register/settings",undefined], ["PUT","/register/settings",{day_start:"06:00",opening_default:0}],
+    ["POST","/register/preview",{from}], ["GET","/register/closings",undefined],
+    ["POST","/register/closings",{}], ["POST","/register/entries",{}],
+    ["POST",`/register/entries/${randomUUID()}/reverse`,{}],
+    ["PATCH",`/accounts/${a.id}/payments`,{}],
+  ] as const) assert.equal((await request(first,method,path,payload)).statusCode,403,path);
+  const settings = await ok(owner,"GET","/register/settings");
+  assert.equal(settings.day_start,"00:00");
+  assert.equal(settings.opening_default,null);
+  await ok(owner,"PUT","/register/settings",{day_start:"05:00",opening_default:500000});
+  assert.equal((await ok(owner,"GET","/register/settings")).day_start,"05:00");
+  await ok(owner,"PUT","/register/settings",{day_start:"00:00",opening_default:null});
+  const out = await ok(owner,"POST","/register/entries",{
+    method:"cash",direction:"out",amount:200000,occurred_at:new Date().toISOString(),reason:"Compra de hielo",
+  });
+  const preview = await ok(owner,"POST","/register/preview",{from});
+  assert.equal(preview.sales.length,1);
+  assert.deepEqual(preview.collected,{cash:1000000,sinpe:8000000,card:1000000});
+  assert.equal(preview.movements.cash,-200000);
+  assert.equal(preview.sellers[0].name,paid.creator_name);
+  const payload = {period:preview.period,fingerprint:preview.fingerprint,opening:500000,
+    counts:{"1000":10,"500":6},actual_sinpe:8000000,actual_card:null,note:"",supersedes:null,confirmed:true};
+  const key = randomUUID();
+  const save = await request(owner,"POST","/register/closings",payload,key);
+  assert.equal(save.statusCode,200,save.body);
+  const closing = save.json();
+  assert.equal(closing.expected_cash,1300000);
+  assert.equal(closing.actual_cash,1300000);
+  assert.equal(closing.difference_cash,0);
+  assert.equal(closing.actual_card,null);
+  assert.equal((await request(owner,"POST","/register/closings",payload,key)).json().id,closing.id);
+  assert.equal((await request(first,"GET",`/register/closings/${closing.id}`)).statusCode,403);
+  await assert.rejects(pool.query("UPDATE cash_closings SET note='edited' WHERE id=$1",[closing.id]));
+  await assert.rejects(pool.query("DELETE FROM cash_entries WHERE id=$1",[out.id]));
+  // A price correction changes billing, never the historical money actually collected.
+  paid = await ok(owner,"PATCH",`/accounts/${a.id}/final`,{version:paid.version,final_total:11000000,confirmed:true});
+  assert.equal(paid.payment_cash,1000000);
+  assert.equal((await request(owner,"POST","/register/closings",payload)).statusCode,409);
+  const corrected = await ok(owner,"PATCH",`/accounts/${a.id}/payments`,{
+    version:paid.version,payments:{cash:1500000,sinpe:7500000,card:1000000},cash_received:2000000,reason:"Comprobante SINPE revisado",
+  });
+  assert.equal(corrected.cash_change,500000);
+  assert.equal(corrected.paid_at,paid.paid_at);
+  const reversal = await ok(owner,"POST",`/register/entries/${out.id}/reverse`,{reason:"Gasto registrado en otra caja"});
+  assert.equal(reversal.direction,"in");
+  assert.equal((await request(owner,"POST",`/register/entries/${out.id}/reverse`,{reason:"No duplicar"})).statusCode,409);
+  const latest = await ok(owner,"POST","/register/preview",preview.period);
+  assert.equal(latest.total,11000000);
+  assert.equal(latest.collected.cash,1500000);
+  assert.equal(latest.movements.cash,0);
+  const revised = {...payload,fingerprint:latest.fingerprint,supersedes:closing.id};
+  assert.equal((await request(owner,"POST","/register/closings",revised)).statusCode,400); // explanation required
+  const secondClosing = await ok(owner,"POST","/register/closings",{...revised,note:"Faltante pendiente de investigar"});
+  assert.equal(secondClosing.difference_cash,-700000);
+  assert.equal(secondClosing.supersedes,closing.id);
+  const preserved = await ok(owner,"GET",`/register/closings/${closing.id}`);
+  assert.deepEqual(preserved.snapshot,closing.snapshot);
+  assert.equal(preserved.snapshot.total,10000000);
+  assert.equal(preserved.snapshot.entries.length,1);
+  assert.equal(preserved.count["500"],6);
+  assert.equal((await request(owner,"POST","/register/closings",{...revised,counts:{"500":-1},note:"Invalid"})).statusCode,400);
+  assert.equal((await request(owner,"POST","/register/closings",{...revised,counts:{"123":1},note:"Invalid"})).statusCode,400);
+  assert.equal((await request(owner,"POST","/register/preview",{from:"2026-02-30T00:00"})).statusCode,400);
+  assert.equal((await request(owner,"POST","/register/preview",{from:new Date(Date.now()+10000).toISOString()})).statusCode,400);
+  assert.ok((await ok(owner,"GET","/register/closings")).rows.some((r:any)=>r.id===closing.id));
+});
+
+test("corte de caja con cobro simultáneo conserva un límite coherente y los pagos sin clasificar", async () => {
+  const from = (await pool.query("SELECT clock_timestamp() AS t")).rows[0].t.toISOString();
+  const a = await customer(first);
+  const [sale, response] = await Promise.all([
+    request(first,"POST",`/accounts/${a.id}/close`,{version:1,final_total:100000,confirmed:true,payments:{cash:0,sinpe:100000,card:0}}),
+    request(owner,"POST","/register/preview",{from}),
+  ]);
+  assert.equal(sale.statusCode,200,sale.body); assert.equal(response.statusCode,200,response.body);
+  const paid = sale.json(); const review = response.json();
+  const included = review.sales.some((s:any)=>s.id===a.id);
+  assert.equal(included,new Date(paid.paid_at)<new Date(review.period.to));
+  assert.equal(review.collected.sinpe,included ? 100000 : 0);
+  // Simulate an account predating cash tracking. No invented cash total.
+  await pool.query("UPDATE accounts SET payment_cash=NULL,payment_sinpe=NULL,payment_card=NULL,cash_received=NULL,cash_change=NULL WHERE id=$1",[a.id]);
+  const legacy = await ok(owner,"POST","/register/preview",{from});
+  assert.equal(legacy.unclassified,1);assert.equal(legacy.collected.cash,0);
+  const payload = {period:legacy.period,fingerprint:legacy.fingerprint,opening:0,counts:{},actual_sinpe:null,actual_card:null,note:"",supersedes:null,confirmed:true};
+  assert.equal((await request(owner,"POST","/register/closings",payload)).statusCode,400);
+  const saved = await ok(owner,"POST","/register/closings",{...payload,note:"Revisar comprobante antiguo"});
+  assert.equal(saved.snapshot.unclassified,1);
+});
+
+test("despliegue gradual conserva cobros hechos por el servidor anterior", async () => {
+  const a = await customer(first);
+  // Simulate the previous server's SQL, which does not know the new payment columns.
+  await pool.query(`UPDATE accounts SET closed_at=clock_timestamp(),closed_by=$2,final_total=100000,
+    cash_received=500000,cash_change=400000 WHERE id=$1`, [a.id,first.id]);
+  const row = await account(a.id);
+  assert.ok(row.paid_at);
+  assert.equal(row.payment_cash,100000);
+  assert.equal(row.payment_sinpe,0);
+  assert.equal(row.payment_card,0);
+});
+
 test("datos, fotos y sesiones sobreviven al reinicio de la API", async () => {
   const before = await ok(owner, "GET", "/accounts?status=all");
   assert.ok(before.rows.length > 0);

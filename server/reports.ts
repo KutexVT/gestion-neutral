@@ -52,7 +52,7 @@ export function registerReports(app: FastifyInstance) {
       } = await pool.query(
         `WITH sales AS (
           SELECT a.id,a.name,a.closed_at,a.closed_by,a.currency,a.calculated_total,a.final_total,
-            a.cash_received,a.cash_change,u.name AS seller_name,
+            a.cash_received,a.cash_change,a.payment_sinpe,a.payment_card,u.name AS seller_name,
             to_char(a.closed_at AT TIME ZONE $3,'YYYY-MM-DD') AS day,
             (SELECT id FROM invoices i WHERE i.account_id=a.id ORDER BY revision DESC LIMIT 1) AS invoice_id
           FROM accounts a JOIN users u ON u.id=a.closed_by
@@ -65,15 +65,17 @@ export function registerReports(app: FastifyInstance) {
             sum(final_total)::bigint AS total,COALESCE(sum(cash_received),0)::bigint AS received,
             COALESCE(sum(cash_change),0)::bigint AS change,
             COALESCE(sum(cash_received-cash_change),0)::bigint AS cash_net,
+            COALESCE(sum(payment_sinpe),0)::bigint AS sinpe_net,
+            COALESCE(sum(payment_card),0)::bigint AS card_net,
             count(*) FILTER (WHERE cash_received IS NULL)::int AS unrecorded
           FROM sales GROUP BY currency
         ), daily AS (
           SELECT day,currency,count(*)::int AS accounts,sum(final_total)::bigint AS total,
-            COALESCE(sum(cash_received-cash_change),0)::bigint AS cash_net
+            COALESCE(sum(cash_received-cash_change),0)::bigint AS cash_net, COALESCE(sum(payment_sinpe),0)::bigint AS sinpe_net, COALESCE(sum(payment_card),0)::bigint AS card_net
           FROM sales GROUP BY day,currency ORDER BY day DESC,currency
         ), sellers AS (
           SELECT closed_by AS id,seller_name AS name,currency,count(*)::int AS accounts,
-            sum(final_total)::bigint AS total,COALESCE(sum(cash_received-cash_change),0)::bigint AS cash_net
+            sum(final_total)::bigint AS total,COALESCE(sum(cash_received-cash_change),0)::bigint AS cash_net, COALESCE(sum(payment_sinpe),0)::bigint AS sinpe_net, COALESCE(sum(payment_card),0)::bigint AS card_net
           FROM sales GROUP BY closed_by,seller_name,currency ORDER BY seller_name,currency
         ), page AS (
           SELECT * FROM sales ORDER BY closed_at DESC,id LIMIT 101 OFFSET $5

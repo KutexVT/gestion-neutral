@@ -609,3 +609,74 @@ test("contador de efectivo para dueño y mesero: sumas, validación y reinicio",
     } finally { await context.close(); }
   }
 });
+
+test("cierre de caja del dueño con pagos SINPE, tarjeta y mixto en móvil", async ({browser}) => {
+  await mkdir("test-artifacts/screenshots",{recursive:true});
+  const ownerContext = await browser.newContext({viewport:{width:1440,height:1000},colorScheme:"light",reducedMotion:"reduce"});
+  const waiterContext = await browser.newContext({viewport:{width:390,height:844},reducedMotion:"reduce"});
+  const owner = await ownerContext.newPage(), waiter = await waiterContext.newPage();
+  const errors:string[]=[];
+  for(const page of [owner,waiter]) page.on("pageerror",e=>errors.push(e.message));
+  try {
+    await login(owner,"dueno");await login(waiter,"leo");
+    await expect(waiter.getByRole("button",{name:"Cierre de caja",exact:true})).toHaveCount(0);
+    for(const method of ["sinpe","card","mixed"]) {
+      const name=`Pago de prueba ${method}`;
+      await waiter.getByRole("button",{name:"Nuevo cliente",exact:true}).click();
+      await waiter.getByLabel("Nombre del cliente",{exact:true}).fill(name);
+      await waiter.getByRole("button",{name:"Abrir cuenta",exact:true}).click();
+      await waiter.getByLabel("Cantidad de Agua mineral",{exact:true}).fill("1");
+      await waiter.getByRole("button",{name:"Registrar pedido",exact:true}).click();
+      await expect(waiter.getByRole("dialog")).toBeHidden();
+      await card(waiter,name,"Finalizar");
+      await waiter.getByLabel("Medio de pago",{exact:true}).selectOption(method);
+      if(method==="mixed") {
+        await waiter.getByLabel("Efectivo aplicado (CRC)",{exact:true}).fill("500");
+        await waiter.getByLabel("SINPE aplicado (CRC)",{exact:true}).fill("500");
+        await waiter.getByLabel("Tarjeta aplicado (CRC)",{exact:true}).fill("500");
+        await waiter.getByLabel("Efectivo recibido (CRC)",{exact:true}).fill("1000");
+        await expect(waiter.locator(".totals").filter({hasText:"Vuelto"})).toContainText("500");
+        await waiter.screenshot({path:"test-artifacts/screenshots/caja-pago-mixto-movil.png",fullPage:true});
+      } else await expect(waiter.getByLabel("Efectivo recibido (CRC)",{exact:true})).toHaveCount(0);
+      await waiter.getByRole("button",{name:"Revisar cierre",exact:true}).click();
+      await waiter.getByRole("button",{name:"Confirmar y emitir factura",exact:true}).click();
+      await expect(waiter.locator(".receipt")).toBeVisible();
+      await expect(waiter.locator(".receipt-methods")).toContainText(method==="card" ? "Tarjeta" : "SINPE");
+      await closeModal(waiter);
+    }
+    await owner.getByRole("button",{name:"Cierre de caja",exact:true}).click();
+    await owner.getByRole("button",{name:"Nuevo cierre",exact:true}).click();
+    await owner.getByRole("button",{name:"Actualizar resumen",exact:true}).click();
+    await expect(owner.getByLabel("Fondo inicial de este intervalo (CRC)",{exact:true})).toBeVisible();
+    await owner.getByLabel("Fondo inicial de este intervalo (CRC)",{exact:true}).fill("5000");
+    await owner.getByRole("button",{name:"Agregar una moneda de ₡500",exact:true}).click({clickCount:3});
+    await expect(owner.getByLabel("Total contado",{exact:true})).toContainText("1 500");
+    await owner.getByLabel("SINPE verificado en el intervalo (CRC)",{exact:true}).fill("2000");
+    await owner.getByLabel("Observaciones",{exact:true}).fill("Conteo de prueba con faltante pendiente de revisar");
+    await owner.evaluate(()=>window.scrollTo(0,0));
+    await owner.screenshot({path:"test-artifacts/screenshots/caja-escritorio.png",fullPage:true});
+    for(const width of [1024,390,320]) {
+      await owner.setViewportSize({width,height:844});
+      expect(await owner.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      if (width <= 700) expect(await owner.locator(".sidebar nav").evaluate(el=>getComputedStyle(el).flexDirection)).toBe("row");
+    }
+    await owner.setViewportSize({width:390,height:844});
+    await owner.screenshot({path:"test-artifacts/screenshots/caja-movil.png",fullPage:true});
+    await owner.getByRole("button",{name:"Cambiar a modo oscuro",exact:true}).click();
+    await owner.screenshot({path:"test-artifacts/screenshots/caja-movil-oscuro.png",fullPage:true});
+    await owner.getByRole("button",{name:"Revisar cierre de caja",exact:true}).click();
+    await expect(owner.getByRole("heading",{name:"Confirmar cierre de caja",exact:true})).toBeVisible();
+    await owner.getByRole("button",{name:"Confirmar y guardar cierre",exact:true}).click();
+    await expect(owner.getByRole("heading",{name:"Cierre guardado",exact:true})).toBeVisible();
+    await expect(owner.locator(".reconciliation")).toContainText("Sin verificar");
+    await owner.screenshot({path:"test-artifacts/screenshots/caja-guardado-movil.png",fullPage:true});
+    await owner.getByRole("button",{name:"Crear revisión de este cierre",exact:true}).click();
+    await owner.getByRole("button",{name:"Actualizar resumen",exact:true}).click();
+    await expect(owner.getByLabel("Cantidad de monedas de ₡500",{exact:true})).toHaveValue("3");
+    await expect(owner.getByLabel("Fondo inicial de este intervalo (CRC)",{exact:true})).toHaveValue("5000");
+    await owner.getByRole("button",{name:"Historial de cierres",exact:true}).click();
+    await owner.getByRole("button",{name:"Ver cierre",exact:true}).first().click();
+    await expect(owner.getByRole("heading",{name:"Cierre guardado",exact:true})).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {await ownerContext.close();await waiterContext.close();}
+});
