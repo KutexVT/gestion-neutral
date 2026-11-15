@@ -52,6 +52,27 @@ async function snapshot(db: DB, input: unknown) {
   const { rows: events } = await db.query(`SELECT a.id,a.created_at,a.action,a.entity_id,a.before_value,a.after_value,u.name AS actor_name
     FROM audit a JOIN users u ON u.id=a.actor_id WHERE a.created_at >= $1 AND a.created_at < $2
     ORDER BY a.created_at DESC,a.id DESC LIMIT 501`, [range.from, range.to]);
+  const { rows: personalEvents } = await db.query(`SELECT a.id,a.entity_id AS account_id,a.created_at,a.before_value,a.after_value,
+    u.name AS person_name,u.role AS person_role,x.name AS actor_name
+    FROM audit a JOIN accounts p ON p.id=a.entity_id JOIN users u ON u.id=p.created_by JOIN users x ON x.id=a.actor_id
+    WHERE a.action='Consumo personal corregido' AND p.kind='personal'
+      AND a.created_at >= $1 AND a.created_at < $2 ORDER BY a.created_at,a.id LIMIT 2001`, [range.from,range.to]);
+  need(personalEvents.length <= 2000, 400, "Hay demasiados movimientos de consumo personal. Reduce el intervalo");
+  const personal = personalEvents.map(e => {
+    need(e.after_value.currency === config.currency, 400, "El intervalo contiene consumo personal en otra moneda");
+    type Item = { id: string; product_name: string; quantity: number; unit_price: number };
+    const before = new Map<string,Item>((e.before_value.items as Item[]).map(item => [item.id,item]));
+    const after = new Map<string,Item>((e.after_value.items as Item[]).map(item => [item.id,item]));
+    const items = [...new Set([...before.keys(),...after.keys()])].map(id => {
+      const item = after.get(id) ?? before.get(id)!;
+      return { product: item.product_name, unit_price: item.unit_price,
+        quantity: (after.get(id)?.quantity ?? 0)-(before.get(id)?.quantity ?? 0) };
+    }).filter(item => item.quantity !== 0);
+    return { id:e.id, account_id:e.account_id, created_at:e.created_at, person_name:e.person_name,
+      person_role:e.person_role, actor_name:e.actor_name, items,
+      total:items.reduce((sum,item) => safe(sum+item.quantity*item.unit_price),0) };
+  }).filter(e => e.items.length > 0);
+  const personal_total = personal.reduce((sum,e) => safe(sum+e.total),0);
   const collected = { cash: 0, sinpe: 0, card: 0 };
   const movements = { cash: 0, sinpe: 0, card: 0 };
   const sellers: Record<string, { name: string; accounts: number; sales: number; cash: number; sinpe: number; card: number }> = {};
@@ -74,7 +95,7 @@ async function snapshot(db: DB, input: unknown) {
   for (const method of ["cash", "sinpe", "card"] as const) safe(collected[method]+movements[method]);
   return { period: range, currency: config.currency, timezone: config.timezone, sales, entries, pending,
     events: events.slice(0, 500), more_events: events.length > 500, sellers: Object.values(sellers),
-    total, calculated, collected, movements, unclassified };
+    total, calculated, collected, movements, unclassified, personal, personal_total };
 }
 
 export function registerCash(app: FastifyInstance,

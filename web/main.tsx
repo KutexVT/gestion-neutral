@@ -268,6 +268,7 @@ function App() {
         { id: "products", label: "Inventario", icon: Package },
         { id: "cash", label: "Flujo de efectivo", icon: CreditCard },
         { id: "register", label: "Cierre de caja", icon: ReceiptText },
+        { id: "personal", label: "Mi consumo", icon: ClipboardList },
         { id: "team", label: "Equipo", icon: Users },
         { id: "audit", label: "Historial", icon: History },
         { id: "cash-count", label: "Contar efectivo", icon: Calculator },
@@ -793,7 +794,7 @@ function Personal() {
       setBusy(false);
     }
   }
-  const data = useLoad<{ rows: Account[] }>("/accounts?kind=personal");
+  const data = useLoad<{ rows: Account[] }>("/accounts?kind=personal&scope=mine");
   return (
     <>
       <PageHeading
@@ -982,7 +983,7 @@ function Catalog({ account }: { account: Account }) {
       setBaseVersion(result.account.version);
       refresh();
       toast("Productos registrados");
-      if (user.role === "waiter") open(null);
+      if (user.role === "waiter" || account.kind === "personal") open(null);
     } catch (e: any) {
       setError(e.message);
       refresh();

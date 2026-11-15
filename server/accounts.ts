@@ -113,11 +113,6 @@ export async function createAccount(db: DB, actor: Actor, body: unknown) {
 }
 
 export async function personal(db: DB, actor: Actor) {
-  need(
-    actor.role === "waiter",
-    403,
-    "El consumo personal corresponde a meseros",
-  );
   const { rows } = await db.query(
     `INSERT INTO accounts(kind,name,created_by,currency) VALUES('personal',$1,$2,$3)
     ON CONFLICT (created_by) WHERE kind='personal' DO NOTHING RETURNING *`,

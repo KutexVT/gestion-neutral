@@ -21,6 +21,9 @@ type Summary = {
   pending: {id: string; name: string; calculated_total: number; currency: string; seller_name: string}[];
   events: {id: number; action: string; actor_name: string; created_at: string; before_value: unknown; after_value: unknown}[];
   more_events: boolean;
+  personal_total?: number;
+  personal?: { id: number; account_id: string; created_at: string; person_name: string; person_role: string; actor_name: string;
+    total: number; items: {product: string; quantity: number; unit_price: number}[] }[];
 };
 type Closing = { id: string; created_at: string; actor_name: string; period_from: string; period_to: string;
   currency: string; opening: number; actual_cash: number; actual_sinpe: number | null; actual_card: number | null;
@@ -56,6 +59,18 @@ function SummaryDetails({ data, openAccount, editable, reverse }: { data: Summar
       </article>)}
     </details>
     <details><summary>Ventas por vendedor</summary><div className="report-table-scroll"><table className="report-table"><thead><tr><th>Vendedor que cobró</th><th>Cuentas</th><th>Ventas</th><th>Efectivo</th><th>SINPE</th><th>Tarjeta</th></tr></thead><tbody>{data.sellers.map((s,i) => <tr key={i}><td>{s.name}</td><td>{s.accounts}</td><td>{m(s.sales)}</td><td>{m(s.cash)}</td><td>{m(s.sinpe)}</td><td>{m(s.card)}</td></tr>)}</tbody></table></div></details>
+    <details><summary>Consumo personal ({data.personal?.length ?? 0})</summary>
+      {data.personal ? <>
+        <p className="muted">Incluye al dueño y los meseros. Muestra los productos registrados y las correcciones hechas en este intervalo. Las cantidades negativas devuelven inventario. Se valora al precio registrado y no suma ventas ni modifica el efectivo esperado.</p>
+        <p><strong>Valor neto del consumo: {m(data.personal_total ?? 0)}</strong></p>
+        {!data.personal.length && <p>Sin consumo personal en este intervalo</p>}
+        {data.personal.map(p => <article className="register-row" key={p.id}>
+          <div className="register-row-heading"><div><h3>{p.person_name} · {p.person_role === "admin" ? "Dueño" : "Mesero"}</h3><p>{date(p.created_at,data.timezone)} · Registró {p.actor_name}</p></div><strong>{m(p.total)}</strong></div>
+          <ul>{p.items.map((item,index) => <li key={index}>{item.quantity} × {item.product} · {m(item.unit_price)}</li>)}</ul>
+          <button className="btn secondary" onClick={() => openAccount(p.account_id)}>{editable ? "Ver consumo / corregir" : "Consultar consumo actual"}</button>
+        </article>)}
+      </> : <p>Este cierre se guardó antes de incluir el detalle de consumo personal. Crea una revisión para consultarlo.</p>}
+    </details>
     <details><summary>Entradas y salidas adicionales ({data.entries.length})</summary>
       <p className="muted">Incluye gastos · retiros · aportes · devoluciones. Las ventas ya están incluidas arriba.</p>
       {data.entries.map(e => <article className="register-row" key={e.id}><strong>{e.direction === "in" ? "Entrada" : "Salida"} · {m(e.amount)} · {paymentNames[e.method]}</strong><p>{e.reason}</p><p>{date(e.occurred_at,data.timezone)} · {e.actor_name}</p>

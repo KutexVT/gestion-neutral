@@ -36,7 +36,7 @@ PostgreSQL de desarrollo: localhost:5487. Aplicación: localhost:3182. Para Vite
 
 ## Funciones
 
-- Clientes activos y cerrados, consumos por mesero y consumo personal
+- Clientes activos y cerrados, consumos por mesero y consumo personal del dueño y meseros
 - Catálogo con fotos, precios históricos y control de existencias
 - Sumar existencias desde Inventario con entrada registrada en movimientos
 - Correcciones por diferencia y transacciones que evitan sobreventa simultánea
@@ -101,3 +101,10 @@ Solo el perfil Dueño tiene acceso a **Cierre de caja** y a su API. En esta edic
 La migración `004_register.sql` conserva las cuentas existentes. Los cobros anteriores con efectivo registrado se clasifican como efectivo; no se inventa un método para los que no tenían registro. La fecha de cobro inicial se conserva aunque se corrija posteriormente la hora de salida. Los cierres y movimientos usan transacciones e idempotencia; una revisión rechaza un resumen que cambió entre consultarlo y guardarlo. Los importes se calculan en céntimos enteros. El contador por denominaciones permite cierres en CRC.
 
 Las pruebas cubren pagos mixtos, vuelto, permisos, entradas y anulaciones, conteos inválidos, diferencias, revisiones inmutables y cobros simultáneos con un corte. La prueba de navegador recorre los tres medios de pago y el cierre móvil con historial y nueva revisión.
+
+### Consumo personal en el cierre
+
+- Dueños y meseros tienen **Mi consumo** con una lista propia editable. Los pedidos descuentan inventario y las correcciones devuelven o descuentan la diferencia.
+- **Cierre de caja → Consumo personal** muestra quién consumió, su rol, quién registró el cambio, productos, cantidades, precio registrado y valor neto del intervalo. Se incluyen tanto dueños como meseros. Es una valoración al precio del catálogo guardado en cada línea, no un costo de compra.
+- El intervalo usa la fecha de cada registro o corrección del historial inmutable. Una corrección de consumo anterior aparece como diferencia positiva o negativa el día en que se realiza. Nunca suma ventas ni reduce el dinero esperado en caja.
+- El detalle queda conservado dentro de cada cierre guardado. Los cierres anteriores a esta función mantienen su contenido original e indican que se necesita una nueva revisión para añadirlo.

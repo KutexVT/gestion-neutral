@@ -680,3 +680,36 @@ test("cierre de caja del dueño con pagos SINPE, tarjeta y mixto en móvil", asy
     expect(errors).toEqual([]);
   } finally {await ownerContext.close();await waiterContext.close();}
 });
+
+test("dueño registra consumo propio y lo consulta en el cierre móvil", async ({browser}) => {
+  const context = await browser.newContext({viewport:{width:390,height:844},reducedMotion:"reduce"});
+  const page = await context.newPage();
+  const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));
+  try {
+    await login(page,"dueno");
+    await page.getByRole("button",{name:"Mi consumo",exact:true}).click();
+    await page.getByRole("button",{name:"Registrar mi consumo",exact:true}).click();
+    await page.getByLabel("Cantidad de Agua mineral",{exact:true}).fill("2");
+    await page.getByRole("button",{name:"Registrar pedido",exact:true}).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect(page.getByRole("heading",{name:"Mi lista personal",exact:true})).toHaveCount(1);
+    await page.getByRole("button",{name:"Ver y corregir",exact:true}).click();
+    await expect(page.locator(".consumption-row").filter({hasText:"Agua mineral"})).toBeVisible();
+    await closeModal(page);
+    await page.getByRole("button",{name:"Cierre de caja",exact:true}).click();
+    await page.getByRole("button",{name:"Nuevo cierre",exact:true}).click();
+    await page.getByRole("button",{name:"Actualizar resumen",exact:true}).click();
+    await page.getByText(/^Consumo personal \(/).click();
+    const details = page.locator("details").filter({has:page.locator("summary").filter({hasText:/^Consumo personal \(/})});
+    await expect(details).toContainText("Dueño · Dueño");
+    await expect(details).toContainText("2 × Agua mineral");
+    await expect(details).toContainText("3 000");
+    for(const width of [1024,390,320]) {
+      await page.setViewportSize({width,height:844});
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    }
+    await mkdir("test-artifacts/screenshots",{recursive:true});
+    await page.screenshot({path:"test-artifacts/screenshots/consumo-dueno-cierre-movil.png",fullPage:true});
+    expect(errors).toEqual([]);
+  } finally {await context.close();}
+});

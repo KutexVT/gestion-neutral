@@ -438,6 +438,58 @@ test("consumo personal privado, editable y separado de ventas", async () => {
   );
 });
 
+test("consumo del dueño: inventario, privacidad y detalle por intervalo en cierres", async () => {
+  const p = await product(12, 125000);
+  const a = await ok(owner, "POST", "/personal");
+  assert.equal((await ok(owner, "POST", "/personal")).id, a.id);
+  let result = await ok(owner, "POST", `/accounts/${a.id}/consumption`, {
+    version: a.version, add: [{product_id:p.id,quantity:2}],
+  });
+  assert.equal(await stock(p.id),10);
+  assert.equal((await request(first,"GET",`/accounts/${a.id}`)).statusCode,403);
+  assert.equal((await request(first,"POST",`/accounts/${a.id}/consumption`,{
+    version:result.account.version,add:[{product_id:p.id,quantity:1}],
+  })).statusCode,403);
+  const own = await ok(owner,"GET","/accounts?kind=personal&scope=mine");
+  assert.equal(own.rows.length,1); assert.equal(own.rows[0].created_by,owner.id);
+  const from = (await pool.query("SELECT clock_timestamp() AS t")).rows[0].t.toISOString();
+  result = await ok(owner,"POST",`/accounts/${a.id}/consumption`,{
+    version:result.account.version,set:[{id:result.account.items[0].id,quantity:1}],
+  });
+  assert.equal(await stock(p.id),11);
+  const other = await ok(second,"POST","/personal");
+  await ok(second,"POST",`/accounts/${other.id}/consumption`,{
+    version:other.version,add:[{product_id:p.id,quantity:3}],
+  });
+  const preview = await ok(owner,"POST","/register/preview",{from});
+  assert.equal(preview.personal.length,2);
+  const ownerEvent = preview.personal.find((e:any)=>e.person_role==="admin");
+  assert.equal(ownerEvent.person_name,"dueno");
+  assert.equal(ownerEvent.actor_name,"dueno");
+  assert.equal(ownerEvent.items[0].quantity,-1);
+  assert.equal(ownerEvent.total,-125000);
+  assert.equal(preview.personal_total,250000);
+  assert.equal(preview.sales.length,0);
+  assert.deepEqual(preview.collected,{cash:0,sinpe:0,card:0});
+  const closing = await ok(owner,"POST","/register/closings",{
+    period:preview.period,fingerprint:preview.fingerprint,opening:0,counts:{},actual_sinpe:null,actual_card:null,
+    note:"",supersedes:null,confirmed:true,
+  });
+  assert.equal(closing.expected_cash,0); assert.equal(closing.difference_cash,0);
+  assert.deepEqual(closing.snapshot.personal,preview.personal);
+  // A correction belongs to its own interval and never rewrites a saved closing.
+  const after = (await pool.query("SELECT clock_timestamp() AS t")).rows[0].t.toISOString();
+  await ok(owner,"POST",`/accounts/${a.id}/consumption`,{
+    version:result.account.version,set:[{id:result.account.items[0].id,quantity:0}],
+  });
+  assert.equal(await stock(p.id),9);
+  const latest = await ok(owner,"POST","/register/preview",{from:after});
+  assert.equal(latest.personal.length,1); assert.equal(latest.personal_total,-125000);
+  assert.equal(latest.personal[0].items[0].quantity,-1);
+  const saved = await ok(owner,"GET",`/register/closings/${closing.id}`);
+  assert.deepEqual(saved.snapshot.personal,preview.personal);
+});
+
 test("cierre validado, doble cierre, cambio de precio y facturas inmutables", async () => {
   const p = await product(10, 125050);
   const a = await customer();
