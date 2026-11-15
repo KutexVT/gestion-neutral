@@ -19,7 +19,9 @@ const labels: Record<string, string> = {
   creator_name: "Mesero creador",
   photo_id: "Foto",
   product_id: "Producto",
-  price: "Precio",
+  price: "Precio de venta",
+  purchase_cost: "Costo de compra por unidad",
+  unit_cost: "Costo de compra registrado",
   unit_price: "Precio por unidad",
   product_name: "Producto",
   stock: "Unidades disponibles",
@@ -112,7 +114,7 @@ export function HistoryValue({
   if (
     typeof value === "number" &&
     [
-      "price",
+      "price", "purchase_cost", "unit_cost",
       "unit_price",
       "calculated_total",
       "final_total",

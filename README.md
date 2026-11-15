@@ -108,3 +108,11 @@ Las pruebas cubren pagos mixtos, vuelto, permisos, entradas y anulaciones, conte
 - **Cierre de caja → Consumo personal** muestra quién consumió, su rol, quién registró el cambio, productos, cantidades, precio registrado y valor neto del intervalo. Se incluyen tanto dueños como meseros. Es una valoración al precio del catálogo guardado en cada línea, no un costo de compra.
 - El intervalo usa la fecha de cada registro o corrección del historial inmutable. Una corrección de consumo anterior aparece como diferencia positiva o negativa el día en que se realiza. Nunca suma ventas ni reduce el dinero esperado en caja.
 - El detalle queda conservado dentro de cada cierre guardado. Los cierres anteriores a esta función mantienen su contenido original e indican que se necesita una nueva revisión para añadirlo.
+
+### Costos de compra y ganancia bruta
+
+- Al crear o editar un producto el dueño debe ingresar **Costo de compra por unidad** y **Precio de venta**. Ambos admiten cero y hasta dos decimales. El inventario muestra la diferencia por unidad; un costo mayor al precio puede producir una pérdida.
+- La migración `005_product_cost.sql` añade costos sin inventar datos antiguos. Los productos existentes quedan con costo pendiente. Completar el costo actual solo afecta entregas nuevas. Las entregas anteriores sin costo mantienen la ganancia pendiente.
+- Cada entrega captura el costo unitario vigente. Cambiarlo en el inventario no altera ventas anteriores. Las correcciones de cantidad conservan el costo de su línea original. Se usa el último costo ingresado por el dueño para nuevas entregas; no hay valoración por lotes ni promedio ponderado.
+- **Flujo de efectivo** muestra costo y ganancia bruta por fecha, vendedor y factura. **Cierre de caja** los conserva en cada revisión nueva. Ganancia bruta = total final facturado − costo de los productos vendidos. Un descuento manual reduce la ganancia. Esto no cambia cobros ni conciliación de efectivo y no incluye gastos operativos ni consumo personal.
+- Si alguna unidad vendida no tiene costo histórico la ganancia de esa venta y de sus agrupaciones queda pendiente. Los cierres antiguos conservan su contenido original. Los costos y ganancias están disponibles únicamente para el dueño; se omiten del catálogo, cuentas, facturas y reportes de meseros.

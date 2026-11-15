@@ -1779,7 +1779,7 @@ function Products() {
         <div className="inventory-list">
           <div className="inventory-head">
             <span>PRODUCTO</span>
-            <span>PRECIO</span>
+            <span>VENTA · COSTO</span>
             <span>EXISTENCIAS</span>
             <span />
           </div>
@@ -1797,7 +1797,10 @@ function Products() {
                   </small>
                 </div>
               </div>
-              <strong>{money(p.price, p.currency || config.currency)}</strong>
+              <strong>{money(p.price, p.currency || config.currency)}
+                <span className="inventory-cost">Compra/u: {p.purchase_cost == null ? "Costo pendiente" : money(p.purchase_cost,p.currency)}<br />
+                  Ganancia/u: {p.purchase_cost == null ? "Pendiente" : money(p.price-p.purchase_cost,p.currency)}</span>
+              </strong>
               <span className={`stock-count ${p.stock <= 5 ? "low" : ""}`}>
                 <i />
                 {p.stock} <small>unidades</small>
@@ -1913,6 +1916,7 @@ function ProductForm({
           ...(product ? { version: product.version } : {}),
           name: f.get("name"),
           price: parseMoney(String(f.get("price"))),
+          purchase_cost: parseMoney(String(f.get("purchase_cost"))),
           stock: Number(f.get("stock")),
           photo_id: photo,
           active: f.get("active") === "on",
@@ -1970,9 +1974,14 @@ function ProductForm({
             placeholder="Ej. Cerveza artesanal"
           />
         </label>
+        <label>
+          Costo de compra por unidad ({product?.currency || config.currency})
+          <input name="purchase_cost" inputMode="decimal" required
+            defaultValue={product?.purchase_cost == null ? "" : (product.purchase_cost / 100).toFixed(2)} placeholder="0.00" />
+        </label>
         <div className="form-columns">
           <label>
-            Precio ({product?.currency || config.currency})
+            Precio de venta ({product?.currency || config.currency})
             <input
               name="price"
               inputMode="decimal"
@@ -2004,8 +2013,7 @@ function ProductForm({
         </label>
         {product && (
           <p className="muted">
-            El precio nuevo aplica a las próximas entregas. Las anteriores
-            conservan su precio.
+            El costo y el precio nuevos aplican a las próximas entregas. Las anteriores conservan sus valores.
           </p>
         )}
         {error && <ErrorBox message={error} />}
@@ -2356,6 +2364,9 @@ function ReportFilters({
 type SalesReport = {
   totals: {
     currency: string;
+    cost?: number | null;
+    profit?: number | null;
+    missing_cost_units?: number;
     accounts: number;
     total: number;
     calculated: number;
@@ -2370,6 +2381,9 @@ type SalesReport = {
   daily: {
     day: string;
     currency: string;
+    cost?: number | null;
+    profit?: number | null;
+    missing_cost_units?: number;
     accounts: number;
     total: number;
     cash_net: number;
@@ -2380,6 +2394,9 @@ type SalesReport = {
     id: string;
     name: string;
     currency: string;
+    cost?: number | null;
+    profit?: number | null;
+    missing_cost_units?: number;
     accounts: number;
     total: number;
     cash_net: number;
@@ -2392,6 +2409,9 @@ type SalesReport = {
     closed_at: string;
     seller_name: string;
     currency: string;
+    cost?: number | null;
+    profit?: number | null;
+    missing_cost_units?: number;
     final_total: number;
     cash_received: number | null;
     cash_change: number | null;
@@ -2408,7 +2428,7 @@ function SalesPage({
   embedded?: boolean;
   filters?: ReportFilter;
 }) {
-  const { config, open } = useApp();
+  const { config, open, user } = useApp();
   const today = localTime(new Date().toISOString(), config.timezone).slice(
     0,
     10,
@@ -2465,7 +2485,12 @@ function SalesPage({
                   </div>
                   <div><dt>SINPE registrado</dt><dd>{money(total.sinpe_net,total.currency)}</dd></div>
                   <div><dt>Tarjeta registrada</dt><dd>{money(total.card_net,total.currency)}</dd></div>
+                  {user.role === "admin" && <>
+                    <div><dt>Costo de productos vendidos</dt><dd>{total.cost == null ? "Pendiente" : money(total.cost,total.currency)}</dd></div>
+                    <div><dt>Ganancia bruta</dt><dd>{total.profit == null ? "Pendiente" : money(total.profit,total.currency)}</dd></div>
+                  </>}
                 </dl>
+                {user.role === "admin" && (total.missing_cost_units ?? 0) > 0 && <p className="muted">{total.missing_cost_units} unidades vendidas sin costo registrado. La ganancia está pendiente.</p>}
                 {total.unrecorded > 0 && (
                   <p className="muted">
                     {total.unrecorded} cuentas antiguas sin registro de
@@ -2475,6 +2500,7 @@ function SalesPage({
               </section>
             ))}
           </div>
+          {user.role === "admin" && <p className="muted">Ganancia bruta = venta final − costo de los productos vendidos. Usa el costo guardado en cada entrega. Excluye gastos del negocio y consumo personal.</p>}
           {cashFlow && (
             <>
               <p className="muted">
@@ -2491,7 +2517,7 @@ function SalesPage({
                         <th>Fecha de cobro</th>
                         <th>Cuentas</th>
                         <th>Ventas</th>
-                        <th>Efectivo neto</th><th>SINPE</th><th>Tarjeta</th>
+                        <th>Costo de productos</th><th>Ganancia bruta</th><th>Efectivo neto</th><th>SINPE</th><th>Tarjeta</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2500,6 +2526,8 @@ function SalesPage({
                           <td>{row.day.split("-").reverse().join("/")}</td>
                           <td>{row.accounts}</td>
                           <td>{money(row.total, row.currency)}</td>
+                          <td>{row.cost == null ? "Pendiente" : money(row.cost,row.currency)}</td>
+                          <td>{row.profit == null ? "Pendiente" : money(row.profit,row.currency)}</td>
                           <td>{money(row.cash_net, row.currency)}</td><td>{money(row.sinpe_net,row.currency)}</td><td>{money(row.card_net,row.currency)}</td>
                         </tr>
                       ))}
@@ -2516,7 +2544,7 @@ function SalesPage({
                         <th>Vendedor que cobró</th>
                         <th>Cuentas</th>
                         <th>Ventas</th>
-                        <th>Efectivo neto</th><th>SINPE</th><th>Tarjeta</th>
+                        <th>Costo de productos</th><th>Ganancia bruta</th><th>Efectivo neto</th><th>SINPE</th><th>Tarjeta</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2525,6 +2553,8 @@ function SalesPage({
                           <td>{row.name}</td>
                           <td>{row.accounts}</td>
                           <td>{money(row.total, row.currency)}</td>
+                          <td>{row.cost == null ? "Pendiente" : money(row.cost,row.currency)}</td>
+                          <td>{row.profit == null ? "Pendiente" : money(row.profit,row.currency)}</td>
                           <td>{money(row.cash_net, row.currency)}</td><td>{money(row.sinpe_net,row.currency)}</td><td>{money(row.card_net,row.currency)}</td>
                         </tr>
                       ))}
@@ -2545,6 +2575,7 @@ function SalesPage({
                       {row.seller_name} · {date(row.closed_at, config.timezone)}
                     </p>
                     <small>Factura #{row.invoice_id}</small>
+                    {user.role === "admin" && <p>Ganancia bruta: {row.profit == null ? "Pendiente" : money(row.profit,row.currency)}</p>}
                   </div>
                   <strong>{money(row.final_total, row.currency)}</strong>
                   <button

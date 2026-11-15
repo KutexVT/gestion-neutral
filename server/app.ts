@@ -60,6 +60,7 @@ const productInput = z
     name: title,
     photo_id: uuid,
     price: z.number().int().min(0).max(1000000000),
+    purchase_cost: z.number().int().min(0).max(1000000000),
     stock: z.number().int().min(0).max(1000000),
     active: z.boolean().default(true),
   })
@@ -232,7 +233,7 @@ export async function buildApp({ logging = true, events = true } = {}) {
   app.get("/api/products", async (request) => {
     return (
       await pool.query(
-        `SELECT * FROM products ${request.actor!.role === "admin" ? "" : "WHERE active"} ORDER BY name,id`,
+        `SELECT ${request.actor!.role === "admin" ? "*" : "id,name,photo_id,price,stock,active,version,currency"} FROM products ${request.actor!.role === "admin" ? "" : "WHERE active"} ORDER BY name,id`,
       )
     ).rows;
   });
@@ -291,7 +292,7 @@ export async function buildApp({ logging = true, events = true } = {}) {
       const {
         rows: [product],
       } = await db.query(
-        `INSERT INTO products(name,photo_id,price,stock,active,currency) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,
+        `INSERT INTO products(name,photo_id,price,stock,active,currency,purchase_cost) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
         [
           body.name,
           body.photo_id,
@@ -299,6 +300,7 @@ export async function buildApp({ logging = true, events = true } = {}) {
           body.stock,
           body.active,
           config.currency,
+          body.purchase_cost,
         ],
       );
       await db.query(
@@ -348,8 +350,8 @@ export async function buildApp({ logging = true, events = true } = {}) {
       const {
         rows: [product],
       } = await db.query(
-        `UPDATE products SET name=$2,photo_id=$3,price=$4,stock=$5,active=$6,version=version+1 WHERE id=$1 RETURNING *`,
-        [id, body.name, body.photo_id, body.price, body.stock, body.active],
+        `UPDATE products SET name=$2,photo_id=$3,price=$4,stock=$5,active=$6,purchase_cost=$7,version=version+1 WHERE id=$1 RETURNING *`,
+        [id, body.name, body.photo_id, body.price, body.stock, body.active, body.purchase_cost],
       );
       await audit(db, actor.id, "Producto actualizado", id, before, product);
       if (before.stock !== body.stock) {

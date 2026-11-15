@@ -48,7 +48,7 @@ for (const [name, price, stock, color, beverage] of [
   const {
     rows: [product],
   } = await pool.query(
-    "INSERT INTO products(name,photo_id,price,stock,currency) VALUES($1,$2,$3,$4,$5) RETURNING *",
+    "INSERT INTO products(name,photo_id,price,stock,currency,purchase_cost) VALUES($1,$2,$3,$4,$5,50000) RETURNING *",
     [name, photo.id, price, stock, config.currency],
   );
   products.push(product);

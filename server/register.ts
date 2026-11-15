@@ -32,11 +32,16 @@ async function snapshot(db: DB, input: unknown) {
   const { rows: sales } = await db.query(`SELECT a.id,a.name,a.currency,a.version,a.arrived_at,a.closed_at,a.paid_at,
     a.calculated_total,a.final_total,a.payment_cash,a.payment_sinpe,a.payment_card,
     a.cash_received,a.cash_change,u.name AS seller_name,u.id AS seller_id,
+    costs.missing_cost_units,CASE WHEN costs.missing_cost_units=0 THEN costs.cost END AS cost,
+    CASE WHEN costs.missing_cost_units=0 THEN a.final_total-costs.cost END AS profit,
     (SELECT id FROM invoices WHERE account_id=a.id ORDER BY revision DESC LIMIT 1) AS invoice_id,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('product',c.product_name,'quantity',c.quantity,
       'unit_price',c.unit_price,'waiter',w.name) ORDER BY c.recorded_at,c.id)
       FROM consumption c JOIN users w ON w.id=c.recorded_by WHERE c.account_id=a.id AND c.quantity>0),'[]') AS items
     FROM accounts a JOIN users u ON u.id=a.closed_by
+    LEFT JOIN LATERAL (SELECT COALESCE(sum(quantity::bigint*unit_cost),0)::bigint AS cost,
+      COALESCE(sum(quantity) FILTER (WHERE unit_cost IS NULL),0)::bigint AS missing_cost_units
+      FROM consumption WHERE account_id=a.id AND quantity>0) costs ON true
     WHERE a.kind='customer' AND a.paid_at >= $1 AND a.paid_at < $2
     ORDER BY a.paid_at,a.id LIMIT 2001`, [range.from, range.to]);
   need(sales.length <= 2000, 400, "Hay más de 2000 ventas. Reduce el intervalo del cierre");
@@ -76,9 +81,10 @@ async function snapshot(db: DB, input: unknown) {
   const collected = { cash: 0, sinpe: 0, card: 0 };
   const movements = { cash: 0, sinpe: 0, card: 0 };
   const sellers: Record<string, { name: string; accounts: number; sales: number; cash: number; sinpe: number; card: number }> = {};
-  let total = 0, calculated = 0, unclassified = 0;
+  let total = 0, calculated = 0, unclassified = 0, cost = 0, missing_cost_units = 0;
   for (const s of sales) {
     total = safe(total+s.final_total); calculated = safe(calculated+s.calculated_total);
+    cost = safe(cost+(s.cost ?? 0)); missing_cost_units = safe(missing_cost_units+s.missing_cost_units);
     if (s.payment_cash === null) unclassified++;
     const seller = sellers[s.seller_id] ??= { name: s.seller_name, accounts: 0, sales: 0, cash: 0, sinpe: 0, card: 0 };
     seller.accounts++; seller.sales = safe(seller.sales+s.final_total);
@@ -95,7 +101,8 @@ async function snapshot(db: DB, input: unknown) {
   for (const method of ["cash", "sinpe", "card"] as const) safe(collected[method]+movements[method]);
   return { period: range, currency: config.currency, timezone: config.timezone, sales, entries, pending,
     events: events.slice(0, 500), more_events: events.length > 500, sellers: Object.values(sellers),
-    total, calculated, collected, movements, unclassified, personal, personal_total };
+    total, calculated, collected, movements, unclassified, personal, personal_total,
+    cost: missing_cost_units ? null : cost, profit: missing_cost_units ? null : safe(total-cost), missing_cost_units };
 }
 
 export function registerCash(app: FastifyInstance,

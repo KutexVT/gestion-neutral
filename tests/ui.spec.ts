@@ -416,7 +416,8 @@ test("alta y edición de producto, avisos, reconexión y sesión revocada", asyn
     });
     await expect(owner.locator(".photo-upload img")).toBeVisible();
     await owner.getByLabel("Nombre", { exact: true }).fill("Bebida nueva");
-    await owner.getByLabel("Precio (CRC)", { exact: true }).fill("2750.50");
+    await owner.getByLabel("Costo de compra por unidad (CRC)", { exact: true }).fill("1250");
+    await owner.getByLabel("Precio de venta (CRC)", { exact: true }).fill("2750.50");
     await owner.getByLabel("Unidades disponibles", { exact: true }).fill("6");
     await owner
       .getByRole("button", { name: "Crear producto", exact: true })
@@ -463,7 +464,7 @@ test("alta y edición de producto, avisos, reconexión y sesión revocada", asyn
     await owner
       .getByRole("button", { name: "Editar Bebida nueva", exact: true })
       .click();
-    await owner.getByLabel("Precio (CRC)", { exact: true }).fill("2900");
+    await owner.getByLabel("Precio de venta (CRC)", { exact: true }).fill("2900");
     await owner.getByLabel("Unidades disponibles", { exact: true }).fill("9");
     await owner
       .getByRole("button", { name: "Guardar cambios", exact: true })
@@ -712,4 +713,57 @@ test("dueño registra consumo propio y lo consulta en el cierre móvil", async (
     await page.screenshot({path:"test-artifacts/screenshots/consumo-dueno-cierre-movil.png",fullPage:true});
     expect(errors).toEqual([]);
   } finally {await context.close();}
+});
+
+test("costo de compra y ganancia bruta del dueño conservan el costo vendido", async ({browser}) => {
+  const ownerContext=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:"reduce"});
+  const waiterContext=await browser.newContext({viewport:{width:390,height:844},reducedMotion:"reduce"});
+  const owner=await ownerContext.newPage(),waiter=await waiterContext.newPage();
+  const errors:string[]=[];for(const page of [owner,waiter])page.on("pageerror",e=>errors.push(e.message));
+  try {
+    await login(owner,"dueno");await login(waiter,"leo");
+    await owner.getByRole("button",{name:"Inventario",exact:true}).click();
+    await owner.getByRole("button",{name:"Editar Agua mineral",exact:true}).click();
+    await owner.getByLabel("Costo de compra por unidad (CRC)",{exact:true}).fill("700");
+    await owner.getByRole("button",{name:"Guardar cambios",exact:true}).click();
+    await expect(owner.getByRole("dialog")).toBeHidden();
+    const inventory = owner.locator(".inventory-row").filter({has:owner.getByRole("heading",{name:"Agua mineral",exact:true})});
+    await expect(inventory).toContainText("Compra/u: ₡700");
+    await expect(inventory).toContainText("Ganancia/u: ₡800");
+    await waiter.getByRole("button",{name:"Nuevo cliente",exact:true}).click();
+    await waiter.getByLabel("Nombre del cliente",{exact:true}).fill("Venta con costo");
+    await waiter.getByRole("button",{name:"Abrir cuenta",exact:true}).click();
+    await waiter.getByLabel("Cantidad de Agua mineral",{exact:true}).fill("2");
+    await waiter.getByRole("button",{name:"Registrar pedido",exact:true}).click();
+    await expect(waiter.getByRole("dialog")).toBeHidden();
+    await owner.getByRole("button",{name:"Editar Agua mineral",exact:true}).click();
+    await owner.getByLabel("Costo de compra por unidad (CRC)",{exact:true}).fill("1000");
+    await owner.getByRole("button",{name:"Guardar cambios",exact:true}).click();
+    await expect(owner.getByRole("dialog")).toBeHidden();
+    await card(waiter,"Venta con costo","Finalizar");
+    await waiter.getByLabel("Efectivo recibido (CRC)",{exact:true}).fill("3000");
+    await waiter.getByRole("button",{name:"Revisar cierre",exact:true}).click();
+    await waiter.getByRole("button",{name:"Confirmar y emitir factura",exact:true}).click();
+    await expect(waiter.locator(".receipt")).toBeVisible();await closeModal(waiter);
+    for(const width of [1024,390,320]) {
+      await owner.setViewportSize({width,height:844});
+      expect(await owner.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    }
+    await mkdir("test-artifacts/screenshots",{recursive:true});
+    await owner.screenshot({path:"test-artifacts/screenshots/costos-inventario-movil.png",fullPage:true});
+    await owner.getByRole("button",{name:"Flujo de efectivo",exact:true}).click();
+    const sale=owner.locator(".sales-row").filter({has:owner.getByRole("heading",{name:"Venta con costo",exact:true})});
+    await expect(sale).toContainText("Ganancia bruta: ₡1 600");
+    await expect(owner.getByRole("columnheader",{name:"Ganancia bruta",exact:true})).toHaveCount(2);
+    expect(await owner.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await owner.setViewportSize({width:1440,height:1000});
+    await owner.screenshot({path:"test-artifacts/screenshots/ganancias-reporte.png",fullPage:true});
+    await owner.getByRole("button",{name:"Cierre de caja",exact:true}).click();
+    await owner.getByRole("button",{name:"Nuevo cierre",exact:true}).click();
+    await owner.getByRole("button",{name:"Actualizar resumen",exact:true}).click();
+    await expect(owner.getByText("Costo de productos vendidos",{exact:true})).toBeVisible();
+    await expect(owner.getByText("Ganancia bruta",{exact:true})).toBeVisible();
+    await owner.screenshot({path:"test-artifacts/screenshots/ganancias-cierre.png",fullPage:true});
+    expect(errors).toEqual([]);
+  }finally{await ownerContext.close();await waiterContext.close();}
 });

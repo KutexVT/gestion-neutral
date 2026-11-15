@@ -12,9 +12,11 @@ import "./register.css";
 type Methods = { cash: number; sinpe: number; card: number };
 type Summary = {
   fingerprint: string; period: {from: string; to: string}; currency: string; timezone: string;
+  cost?: number | null; profit?: number | null; missing_cost_units?: number;
   total: number; calculated: number; collected: Methods; movements: Methods; unclassified: number;
   sales: { id: string; name: string; seller_name: string; paid_at: string; calculated_total: number; final_total: number;
     payment_cash: number | null; payment_sinpe: number | null; payment_card: number | null; invoice_id: number;
+    cost?: number | null; profit?: number | null; missing_cost_units?: number;
     items: { product: string; quantity: number; unit_price: number; waiter: string }[] }[];
   sellers: {name: string; accounts: number; sales: number; cash: number; sinpe: number; card: number}[];
   entries: {id: string; occurred_at: string; actor_name: string; method: keyof Methods; direction: string; amount: number; reason: string; reverses: string | null}[];
@@ -46,6 +48,8 @@ function SummaryDetails({ data, openAccount, editable, reverse }: { data: Summar
   const m = (v: number) => money(v,data.currency);
   return <div className="register-details">
     <div className="register-overview"><div><span>Ventas facturadas</span><strong>{m(data.total)}</strong></div><div><span>Cobros registrados</span><strong>{m(data.collected.cash+data.collected.sinpe+data.collected.card)}</strong></div><div><span>Cuentas pendientes</span><strong>{data.pending.length}</strong></div></div>
+    <div className="register-overview"><div><span>Costo de productos vendidos</span><strong>{data.cost == null ? "Pendiente" : m(data.cost)}</strong></div><div><span>Ganancia bruta</span><strong>{data.profit == null ? "Pendiente" : m(data.profit)}</strong></div></div>
+    <p className="muted">Ganancia bruta = venta final − costo guardado de los productos vendidos. Excluye gastos del negocio y consumo personal. {(data.missing_cost_units ?? 0) > 0 ? `${data.missing_cost_units} unidades vendidas no tienen costo registrado.` : data.cost === undefined ? "Este cierre se guardó antes de registrar costos." : ""}</p>
     {data.unclassified > 0 && <ErrorBox message={`${data.unclassified} cuentas antiguas tienen el pago sin clasificar. El esperado está incompleto hasta revisar esos cobros.`} />}
     <p className="muted">Se usa la fecha del cobro original. El total facturado y el dinero registrado pueden diferir después de una corrección. Las cuentas pendientes y el consumo personal no suman cobros.</p>
     <details><summary>Ventas y facturas ({data.sales.length})</summary>
@@ -53,6 +57,7 @@ function SummaryDetails({ data, openAccount, editable, reverse }: { data: Summar
       {data.sales.map(s => <article className="register-row" key={s.id}>
         <div className="register-row-heading"><div><h3>{s.name}</h3><p>{s.seller_name} · {date(s.paid_at,data.timezone)}</p></div><strong>{m(s.final_total)}</strong></div>
         <p>Calculado: {m(s.calculated_total)} · Factura #{s.invoice_id}</p>
+        <p>Costo: {s.cost == null ? "Pendiente" : m(s.cost)} · Ganancia bruta: {s.profit == null ? "Pendiente" : m(s.profit)}</p>
         <p>{s.payment_cash === null ? "Pago sin clasificar" : methods.map(method => `${paymentNames[method]}: ${m(s[`payment_${method}`] ?? 0)}`).join(" · ")}</p>
         <ul>{s.items.map((item,index) => <li key={index}>{item.quantity} × {item.product} · {m(item.unit_price)} · Entregó {item.waiter}</li>)}</ul>
         <button className="btn secondary" onClick={() => openAccount(s.id)}>{editable ? "Ver cuenta / corregir" : "Consultar cuenta actual"}</button>

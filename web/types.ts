@@ -14,6 +14,7 @@ export type Product = {
   name: string;
   photo_id: string;
   price: number;
+  purchase_cost?: number | null;
   stock: number;
   active: boolean;
   version: number;

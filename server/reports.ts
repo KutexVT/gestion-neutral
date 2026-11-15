@@ -53,16 +53,24 @@ export function registerReports(app: FastifyInstance) {
         `WITH sales AS (
           SELECT a.id,a.name,a.closed_at,a.closed_by,a.currency,a.calculated_total,a.final_total,
             a.cash_received,a.cash_change,a.payment_sinpe,a.payment_card,u.name AS seller_name,
+            c.missing_cost_units,CASE WHEN c.missing_cost_units=0 THEN c.cost END AS cost,
+            CASE WHEN c.missing_cost_units=0 THEN a.final_total-c.cost END AS profit,
             to_char(a.closed_at AT TIME ZONE $3,'YYYY-MM-DD') AS day,
             (SELECT id FROM invoices i WHERE i.account_id=a.id ORDER BY revision DESC LIMIT 1) AS invoice_id
           FROM accounts a JOIN users u ON u.id=a.closed_by
+          LEFT JOIN LATERAL (SELECT COALESCE(sum(quantity::bigint*unit_cost),0)::bigint AS cost,
+            COALESCE(sum(quantity) FILTER (WHERE unit_cost IS NULL),0)::bigint AS missing_cost_units
+            FROM consumption WHERE account_id=a.id AND quantity>0) c ON true
           WHERE a.kind='customer' AND a.closed_at IS NOT NULL
             AND ($1::date IS NULL OR a.closed_at >= ($1::date::timestamp AT TIME ZONE $3))
             AND ($2::date IS NULL OR a.closed_at < (($2::date+1)::timestamp AT TIME ZONE $3))
             AND ($4::uuid IS NULL OR a.closed_by=$4)
         ), totals AS (
           SELECT currency,count(*)::int AS accounts,sum(calculated_total)::bigint AS calculated,
-            sum(final_total)::bigint AS total,COALESCE(sum(cash_received),0)::bigint AS received,
+            sum(final_total)::bigint AS total,
+            sum(missing_cost_units)::bigint AS missing_cost_units,
+            CASE WHEN sum(missing_cost_units)=0 THEN sum(cost)::bigint END AS cost,
+            CASE WHEN sum(missing_cost_units)=0 THEN sum(profit)::bigint END AS profit,COALESCE(sum(cash_received),0)::bigint AS received,
             COALESCE(sum(cash_change),0)::bigint AS change,
             COALESCE(sum(cash_received-cash_change),0)::bigint AS cash_net,
             COALESCE(sum(payment_sinpe),0)::bigint AS sinpe_net,
@@ -71,11 +79,17 @@ export function registerReports(app: FastifyInstance) {
           FROM sales GROUP BY currency
         ), daily AS (
           SELECT day,currency,count(*)::int AS accounts,sum(final_total)::bigint AS total,
+            sum(missing_cost_units)::bigint AS missing_cost_units,
+            CASE WHEN sum(missing_cost_units)=0 THEN sum(cost)::bigint END AS cost,
+            CASE WHEN sum(missing_cost_units)=0 THEN sum(profit)::bigint END AS profit,
             COALESCE(sum(cash_received-cash_change),0)::bigint AS cash_net, COALESCE(sum(payment_sinpe),0)::bigint AS sinpe_net, COALESCE(sum(payment_card),0)::bigint AS card_net
           FROM sales GROUP BY day,currency ORDER BY day DESC,currency
         ), sellers AS (
           SELECT closed_by AS id,seller_name AS name,currency,count(*)::int AS accounts,
-            sum(final_total)::bigint AS total,COALESCE(sum(cash_received-cash_change),0)::bigint AS cash_net, COALESCE(sum(payment_sinpe),0)::bigint AS sinpe_net, COALESCE(sum(payment_card),0)::bigint AS card_net
+            sum(final_total)::bigint AS total,
+            sum(missing_cost_units)::bigint AS missing_cost_units,
+            CASE WHEN sum(missing_cost_units)=0 THEN sum(cost)::bigint END AS cost,
+            CASE WHEN sum(missing_cost_units)=0 THEN sum(profit)::bigint END AS profit,COALESCE(sum(cash_received-cash_change),0)::bigint AS cash_net, COALESCE(sum(payment_sinpe),0)::bigint AS sinpe_net, COALESCE(sum(payment_card),0)::bigint AS card_net
           FROM sales GROUP BY closed_by,seller_name,currency ORDER BY seller_name,currency
         ), page AS (
           SELECT * FROM sales ORDER BY closed_at DESC,id LIMIT 101 OFFSET $5
@@ -101,6 +115,9 @@ export function registerReports(app: FastifyInstance) {
                 400,
                 "Reduce el intervalo del reporte: el importe excede el límite permitido",
               );
+      if (actor.role !== "admin")
+        for (const rows of [report.totals,report.daily,report.sellers,report.rows])
+          for (const row of rows) { delete row.cost; delete row.profit; delete row.missing_cost_units; }
       return {
         ...report,
         rows: report.rows.slice(0, 100),

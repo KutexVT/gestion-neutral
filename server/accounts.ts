@@ -37,7 +37,7 @@ export async function detail(db: DB, id: string, actor: Actor) {
     "No puedes consultar esta cuenta cerrada",
   );
   const { rows: items } = await db.query(
-    `SELECT c.*, u.name AS waiter_name FROM consumption c
+    `SELECT c.id,c.account_id,c.product_id,c.product_name,c.unit_price,c.quantity,c.recorded_by,c.recorded_at, u.name AS waiter_name FROM consumption c
     JOIN users u ON u.id=c.recorded_by WHERE account_id=$1 AND quantity>0 ORDER BY recorded_at,id`,
     [id],
   );

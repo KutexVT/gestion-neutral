@@ -63,6 +63,7 @@ async function product(stock = 10, price = 125000) {
     name: `Producto ${randomBytes(3).toString("hex")}`,
     photo_id: photo,
     price,
+    purchase_cost: 50000,
     stock,
   });
 }
@@ -216,6 +217,7 @@ test("corrección de consumo aplica exactamente la diferencia; precio y autor qu
     name: "Precio nuevo",
     photo_id: photo,
     price: 99900,
+    purchase_cost: 50000,
     stock: 5,
     active: true,
     version: current.version,
@@ -490,6 +492,86 @@ test("consumo del dueño: inventario, privacidad y detalle por intervalo en cier
   assert.deepEqual(saved.snapshot.personal,preview.personal);
 });
 
+test("costos obligatorios, ganancias históricas y privacidad por rol", async () => {
+  const base = {name:"Costo validado",photo_id:photo,price:125000,stock:10};
+  assert.equal((await request(owner,"POST","/products",base)).statusCode,400);
+  for(const purchase_cost of [-1,1.5,1000000001,null])
+    assert.equal((await request(owner,"POST","/products",{...base,purchase_cost})).statusCode,400);
+  const zero = await ok(owner,"POST","/products",{...base,purchase_cost:0});
+  assert.equal(zero.purchase_cost,0);
+  const from = (await pool.query("SELECT clock_timestamp() AS t")).rows[0].t.toISOString();
+  const p = await product(10);
+  const a = await customer(first);
+  let detail = (await ok(first,"POST",`/accounts/${a.id}/consumption`,{
+    version:1,add:[{product_id:p.id,quantity:2}],
+  })).account;
+  const line = detail.items[0];
+  const current = (await ok(owner,"GET","/products")).find((x:any)=>x.id===p.id);
+  await ok(owner,"PATCH",`/products/${p.id}`,{
+    name:p.name,photo_id:photo,price:150000,purchase_cost:80000,stock:current.stock,active:true,version:current.version,
+  });
+  detail = (await ok(first,"POST",`/accounts/${a.id}/consumption`,{
+    version:detail.version,add:[{product_id:p.id,quantity:1}],
+  })).account;
+  detail = (await ok(first,"POST",`/accounts/${a.id}/consumption`,{
+    version:detail.version,set:[{id:line.id,quantity:1}],
+  })).account;
+  assert.equal(await stock(p.id),8);
+  const costs = (await pool.query("SELECT unit_cost FROM consumption WHERE account_id=$1 ORDER BY recorded_at,id",[a.id])).rows;
+  assert.deepEqual(costs.map(c=>c.unit_cost),[50000,80000]);
+  await assert.rejects(pool.query("UPDATE consumption SET unit_cost=1 WHERE id=$1",[line.id]),/costo registrado/);
+  detail = await ok(first,"POST",`/accounts/${a.id}/close`,{
+    version:detail.version,final_total:240000,cash_received:300000,confirmed:true,
+  });
+  const report = await ok(owner,"GET","/cash-flow");
+  const sale = report.rows.find((s:any)=>s.id===a.id);
+  assert.equal(sale.cost,130000);assert.equal(sale.profit,110000);assert.equal(sale.missing_cost_units,0);
+  for(const rows of [report.totals,report.daily,report.sellers])
+    for(const row of rows) if(row.missing_cost_units===0) assert.equal(row.profit,row.total-row.cost);
+  const products = await ok(first,"GET","/products");
+  assert.ok(products.every((product:any)=>!("purchase_cost" in product)));
+  assert.ok(detail.items.every((item:any)=>!("unit_cost" in item)));
+  assert.ok(detail.invoices.every((invoice:any)=>invoice.snapshot.items.every((item:any)=>!("unit_cost" in item))));
+  const workerReport = await ok(first,"GET","/sales");
+  for(const rows of [workerReport.rows,workerReport.daily,workerReport.sellers,workerReport.totals])
+    for(const row of rows) for(const field of ["cost","profit","missing_cost_units"]) assert.ok(!(field in row));
+  const preview = await ok(owner,"POST","/register/preview",{from});
+  assert.equal(preview.cost,130000);assert.equal(preview.profit,110000);
+  const saved = await ok(owner,"POST","/register/closings",{
+    period:preview.period,fingerprint:preview.fingerprint,opening:0,counts:{"1000":2,"100":4},
+    actual_sinpe:null,actual_card:null,note:"",supersedes:null,confirmed:true,
+  });
+  assert.equal(saved.expected_cash,240000);assert.equal(saved.snapshot.profit,110000);
+  // Later invoice corrections change quantities or final price, never the delivery's unit cost.
+  detail = await ok(owner,"PATCH",`/accounts/${a.id}/final`,{version:detail.version,final_total:100000,confirmed:true});
+  const corrected = await ok(owner,"GET","/cash-flow");
+  assert.equal(corrected.rows.find((s:any)=>s.id===a.id).profit,-30000);
+  assert.equal((await ok(owner,"GET",`/register/closings/${saved.id}`)).snapshot.profit,110000);
+});
+
+test("costos antiguos quedan pendientes y entregas del servidor anterior capturan el costo actual", async () => {
+  const p = await product(10);
+  await pool.query("UPDATE products SET purchase_cost=NULL WHERE id=$1",[p.id]);
+  const a = await customer(second);
+  let detail = (await ok(second,"POST",`/accounts/${a.id}/consumption`,{
+    version:1,add:[{product_id:p.id,quantity:1}],
+  })).account;
+  assert.equal((await pool.query("SELECT unit_cost FROM consumption WHERE account_id=$1",[a.id])).rows[0].unit_cost,null);
+  await pool.query("UPDATE products SET purchase_cost=40000 WHERE id=$1",[p.id]);
+  // The old server omits the new column. The database still captures it for each new delivery.
+  const legacy = (await pool.query(`INSERT INTO consumption(account_id,product_id,product_name,unit_price,quantity,recorded_by)
+    VALUES($1,$2,$3,$4,1,$5) RETURNING unit_cost`,[a.id,p.id,p.name,p.price,second.id])).rows[0];
+  assert.equal(legacy.unit_cost,40000);
+  detail = await ok(second,"POST",`/accounts/${a.id}/close`,{version:detail.version,final_total:250000,cash_received:250000,confirmed:true});
+  const report = await ok(owner,"GET","/cash-flow");
+  const sale = report.rows.find((s:any)=>s.id===a.id);
+  assert.equal(sale.cost,null);assert.equal(sale.profit,null);assert.equal(sale.missing_cost_units,1);
+  const seller = report.sellers.find((s:any)=>s.id===second.id);
+  assert.equal(seller.profit,null);assert.equal(seller.cost,null);
+  const preview = await ok(owner,"POST","/register/preview",{from:detail.paid_at});
+  assert.equal(preview.profit,null);assert.equal(preview.missing_cost_units,1);
+});
+
 test("cierre validado, doble cierre, cambio de precio y facturas inmutables", async () => {
   const p = await product(10, 125050);
   const a = await customer();
@@ -574,6 +656,7 @@ test("ajuste manual simultáneo con venta nunca pierde unidades y desactivar con
       name: p.name,
       photo_id: photo,
       price: p.price,
+      purchase_cost: p.purchase_cost,
       stock: 7,
       active: true,
       version: p.version,
@@ -592,6 +675,7 @@ test("ajuste manual simultáneo con venta nunca pierde unidades y desactivar con
     name: p.name,
     photo_id: photo,
     price: p.price,
+    purchase_cost: p.purchase_cost,
     stock: current.stock,
     active: false,
     version: current.version,
