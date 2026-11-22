@@ -652,7 +652,8 @@ test("cierre de caja del dueño con pagos SINPE, tarjeta y mixto en móvil", asy
     await owner.getByLabel("Fondo inicial de este intervalo (CRC)",{exact:true}).fill("5000");
     await owner.getByRole("button",{name:"Agregar una moneda de ₡500",exact:true}).click({clickCount:3});
     await expect(owner.getByLabel("Total contado",{exact:true})).toContainText("1 500");
-    await owner.getByLabel("SINPE verificado en el intervalo (CRC)",{exact:true}).fill("2000");
+    await expect(owner.getByLabel("SINPE verificado en el intervalo (CRC)",{exact:true})).toHaveCount(0);
+    await expect(owner.getByLabel("Tarjeta verificada en el intervalo (CRC)",{exact:true})).toHaveCount(0);
     await owner.getByLabel("Observaciones",{exact:true}).fill("Conteo de prueba con faltante pendiente de revisar");
     await owner.evaluate(()=>window.scrollTo(0,0));
     await owner.screenshot({path:"test-artifacts/screenshots/caja-escritorio.png",fullPage:true});
@@ -669,7 +670,7 @@ test("cierre de caja del dueño con pagos SINPE, tarjeta y mixto en móvil", asy
     await expect(owner.getByRole("heading",{name:"Confirmar cierre de caja",exact:true})).toBeVisible();
     await owner.getByRole("button",{name:"Confirmar y guardar cierre",exact:true}).click();
     await expect(owner.getByRole("heading",{name:"Cierre guardado",exact:true})).toBeVisible();
-    await expect(owner.locator(".reconciliation")).toContainText("Sin verificar");
+    await expect(owner.locator(".reconciliation")).toContainText("Automático");
     await owner.screenshot({path:"test-artifacts/screenshots/caja-guardado-movil.png",fullPage:true});
     await owner.getByRole("button",{name:"Crear revisión de este cierre",exact:true}).click();
     await owner.getByRole("button",{name:"Actualizar resumen",exact:true}).click();
@@ -766,4 +767,58 @@ test("costo de compra y ganancia bruta del dueño conservan el costo vendido", a
     await owner.screenshot({path:"test-artifacts/screenshots/ganancias-cierre.png",fullPage:true});
     expect(errors).toEqual([]);
   }finally{await ownerContext.close();await waiterContext.close();}
+});
+
+test("permiso en equipo: empleado hace cierre propio y dueño lo recibe en tiempo real", async ({browser}) => {
+  const ownerContext=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:"reduce"});
+  const employeeContext=await browser.newContext({viewport:{width:390,height:844},reducedMotion:"reduce"});
+  const owner=await ownerContext.newPage(),employee=await employeeContext.newPage();
+  const errors:string[]=[];for(const page of [owner,employee])page.on("pageerror",e=>errors.push(e.message));
+  try {
+    await login(owner,"dueno");await login(employee,"leo");
+    await expect(employee.getByRole("button",{name:"Cierre de caja",exact:true})).toHaveCount(0);
+    await owner.getByRole("button",{name:"Equipo",exact:true}).click();
+    const permission=owner.getByRole("checkbox",{name:"Permitir cierre de caja a Leo Vega",exact:true});
+    await permission.check();
+    await expect(permission).toBeChecked();
+    await employee.getByRole("button",{name:"Cierre de caja",exact:true}).click();
+    await expect(employee.getByRole("button",{name:"Ver cierre",exact:true})).toHaveCount(0);
+    await expect(employee.getByRole("button",{name:"Configurar horario y fondo",exact:true})).toHaveCount(0);
+    await owner.getByRole("button",{name:"Cierre de caja",exact:true}).click();
+    await expect(owner.getByText("Un momento…",{exact:true})).toHaveCount(0);
+    const before=await owner.getByRole("button",{name:"Ver cierre",exact:true}).count();
+    await employee.getByRole("button",{name:"Nuevo cierre",exact:true}).click();
+    await expect(employee.getByRole("button",{name:"Registrar entrada o salida",exact:true})).toHaveCount(0);
+    await employee.getByRole("button",{name:"Actualizar resumen",exact:true}).click();
+    await employee.getByLabel("Fondo inicial de este intervalo (CRC)",{exact:true}).fill("0");
+    await expect(employee.getByText("Ganancia bruta",{exact:true})).toHaveCount(0);
+    await expect(employee.getByRole("columnheader",{name:"Cobrado",exact:true})).toHaveCount(1);
+    await expect(employee.getByRole("columnheader",{name:"Esperado",exact:true})).toHaveCount(0);
+    await expect(employee.getByLabel("SINPE verificado en el intervalo (CRC)",{exact:true})).toHaveCount(0);
+    await expect(employee.getByLabel("Tarjeta verificada en el intervalo (CRC)",{exact:true})).toHaveCount(0);
+    await expect(employee.locator(".reconciliation")).toContainText("Automático");
+    await expect(employee.locator(".reconciliation")).toContainText("Total del cierre");
+    await employee.getByLabel("Observaciones",{exact:true}).fill("Cierre de prueba realizado por empleado autorizado");
+    for(const width of [1024,390,320]) {
+      await employee.setViewportSize({width,height:844});
+      expect(await employee.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    }
+    await employee.getByRole("button",{name:"Revisar cierre de caja",exact:true}).click();
+    await employee.getByRole("button",{name:"Confirmar y guardar cierre",exact:true}).click();
+    await expect(employee.getByRole("heading",{name:"Cierre guardado",exact:true})).toBeVisible();
+    await expect(employee.getByText(/Realizado por Leo Vega/)).toBeVisible();
+    await mkdir("test-artifacts/screenshots",{recursive:true});
+    await employee.screenshot({path:"test-artifacts/screenshots/cierre-empleado-movil.png",fullPage:true});
+    await expect(owner.getByRole("button",{name:"Ver cierre",exact:true})).toHaveCount(before+1);
+    const row=owner.locator(".register-row").filter({hasText:"Leo Vega"});
+    await expect(row).toHaveCount(1);
+    await row.getByRole("button",{name:"Ver cierre",exact:true}).click();
+    await expect(owner.getByText(/Realizado por Leo Vega/)).toBeVisible();
+    await expect(owner.getByText("Ganancia bruta",{exact:true})).toBeVisible();
+    await owner.getByRole("button",{name:"Equipo",exact:true}).click();
+    await owner.getByRole("checkbox",{name:"Permitir cierre de caja a Leo Vega",exact:true}).uncheck();
+    await expect(employee.getByRole("button",{name:"Cierre de caja",exact:true})).toHaveCount(0);
+    await expect(employee.getByRole("heading",{name:"Cierre guardado",exact:true})).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {await ownerContext.close();await employeeContext.close();}
 });

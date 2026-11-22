@@ -216,6 +216,11 @@ function App() {
   useEffect(() => {
     if (!session) return;
     let events: EventSource | null = null;
+    const updatePermission = (allowed: boolean) => {
+      setSession(current => current?.user.id === session.user.id ? {...current,user:{...current.user,can_close_register:allowed}} : current);
+      if (session.user.role !== "admin" && !allowed) setScreen(current => current === "register" ? "clients" : current);
+    };
+    const syncProfile = () => { void api<Session>("/me").then(next => updatePermission(!!next.user.can_close_register)).catch(() => {}); };
     const connect = () => {
       events?.close();
       if (!navigator.onLine) {
@@ -225,10 +230,12 @@ function App() {
       events = new EventSource("/api/events");
       events.onopen = () => {
         setConnected(true);
+        syncProfile();
         refresh();
       };
       events.onerror = () => setConnected(false);
       events.addEventListener("change", refresh);
+      events.addEventListener("profile", event => updatePermission(JSON.parse((event as MessageEvent).data).can_close_register === true));
       events.addEventListener("revoked", () => {
         events?.close();
         setSession(null);
@@ -242,7 +249,7 @@ function App() {
     window.addEventListener("online", connect);
     window.addEventListener("offline", offline);
     connect();
-    const focus = () => refresh();
+    const focus = () => { refresh(); syncProfile(); };
     window.addEventListener("focus", focus);
     return () => {
       events?.close();
@@ -262,6 +269,7 @@ function App() {
   if (!session) return <RoleEntry onLogin={login} />;
   const { user, config } = session;
   const admin = user.role === "admin";
+  const canClose = admin || !!user.can_close_register;
   const nav = admin
     ? [
         { id: "clients", label: "Clientes", icon: LayoutDashboard },
@@ -279,6 +287,7 @@ function App() {
         { id: "personal", label: "Mi consumo", icon: ClipboardList },
         { id: "closed", label: "Cerradas", icon: ReceiptText },
         { id: "sales", label: "Mis ventas", icon: CreditCard },
+        ...(canClose ? [{ id: "register", label: "Cierre de caja", icon: ReceiptText }] : []),
         { id: "cash-count", label: "Contar efectivo", icon: Calculator },
       ];
   async function logout() {
@@ -389,8 +398,8 @@ function App() {
             {admin && screen === "audit" && <AuditPage />}
             {screen === "personal" && <Personal />}
             {screen === "sales" && <SalesPage />}
-            {screen === "cash-count" && <><CashCounter counts={cashCounts} onChange={setCashCounts} />{admin && <button className="btn primary" onClick={() => setScreen("register")}>Ir a cierre de caja con este conteo</button>}</>}
-            {admin && screen === "register" && <CashRegister config={config} revision={revision} counts={cashCounts} setCounts={setCashCounts} openAccount={id => setOverlay({ type: "account", id, tab: "close" })} />}
+            {screen === "cash-count" && <><CashCounter counts={cashCounts} onChange={setCashCounts} />{canClose && <button className="btn primary" onClick={() => setScreen("register")}>Ir a cierre de caja con este conteo</button>}</>}
+            {canClose && screen === "register" && <CashRegister owner={admin} config={config} revision={revision} counts={cashCounts} setCounts={setCashCounts} openAccount={id => setOverlay({ type: "account", id, tab: "close" })} />}
             {admin && screen === "cash" && <SalesPage cashFlow />}
           </div>
           <footer className="page-footer">
@@ -2030,6 +2039,13 @@ function Team() {
   const { user, open, refresh, toast } = useApp();
   const [removing, setRemoving] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  async function setPermission(id: string, allowed: boolean, input: HTMLInputElement) {
+    setBusy(true);
+    try {
+      await api(`/users/${id}/register-permission`,"PATCH",{can_close_register:allowed});
+      refresh();toast(allowed ? "Permiso de cierre activado" : "Permiso de cierre retirado");
+    } catch(e:any) { input.checked = !allowed; toast(e.message); refresh(); } finally { setBusy(false); }
+  }
   async function remove(id: string) {
     setBusy(true);
     try {
@@ -2094,6 +2110,10 @@ function Team() {
                       : "Sin consumo"}
                   </strong>
                 </div>
+                {member.role === "waiter" && member.active && <label className="checkbox team-permission">
+                  <input type="checkbox" key={`${member.id}:${!!member.can_close_register}`} aria-label={`Permitir cierre de caja a ${member.name}`} defaultChecked={!!member.can_close_register}
+                    disabled={busy} onChange={e => void setPermission(member.id,e.currentTarget.checked,e.currentTarget)} /> Permitir cierre de caja
+                </label>}
                 {account && (
                   <button
                     className="btn secondary"

@@ -52,6 +52,7 @@ export type Actor = {
   role: "admin" | "waiter";
   sessionHash: string;
   csrf: string;
+  can_close_register?: boolean;
 };
 export class Problem extends Error {
   constructor(
@@ -154,11 +155,12 @@ export async function mutation(
   const operationKey = uuid.parse(key);
   return transaction(async (db) => {
     const valid = await db.query(
-      `SELECT u.id FROM users u JOIN sessions s ON s.user_id=u.id
+      `SELECT u.id,u.can_close_register FROM users u JOIN sessions s ON s.user_id=u.id
       WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active FOR SHARE OF u,s`,
       [actor.sessionHash],
     );
     need(valid.rowCount, 401, "Tu sesión terminó. Vuelve a ingresar");
+    actor.can_close_register = valid.rows[0].can_close_register;
     const inserted = await db.query(
       `INSERT INTO operations(actor_id,key,fingerprint) VALUES($1,$2,$3)
       ON CONFLICT DO NOTHING RETURNING key`,

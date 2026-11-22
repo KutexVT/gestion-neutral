@@ -12,6 +12,19 @@ const periodSchema = z.object({ from: timestamp, to: timestamp.optional() }).str
 const methodSchema = z.enum(["cash", "sinpe", "card"]);
 const reasonSchema = z.string().trim().min(3).max(500);
 const owner = (request: FastifyRequest) => need(request.actor?.role === "admin", 403, "Solo el dueño puede gestionar cierres de caja");
+const closer = (actor: Actor) => need(actor.role === "admin" || actor.can_close_register,403,"No tienes permiso para hacer cierres de caja");
+// The full snapshot is preserved for the owner. Staff only receive the reconciliation data.
+function visibleSnapshot(data: any, actor: Actor) {
+  if (actor.role === "admin") return data;
+  const {cost,profit,missing_cost_units,personal,personal_total,events,more_events,...rest} = data;
+  return {...rest,events:[],more_events:false,personal:[],sales:data.sales.map((s:any) => {
+    const {cost,profit,missing_cost_units,...sale} = s; return sale;
+  })};
+}
+function visibleClosing(row: any, actor: Actor) {
+  const electronic = row.snapshot.collected.sinpe+row.snapshot.movements.sinpe+row.snapshot.collected.card+row.snapshot.movements.card;
+  return {...row,total:safe(row.actual_cash+electronic),charged_total:safe(row.expected_cash+electronic),snapshot:visibleSnapshot(row.snapshot,actor)};
+}
 const safe = (n: number) => { need(Number.isSafeInteger(n), 400, "Reduce el intervalo: el importe excede el límite permitido"); return n; };
 async function instant(db: DB, value: string) {
   return (await db.query(`SELECT ${/Z$|[+-]\d\d:\d\d$/.test(value) ? "$1::timestamptz" : "$1::timestamp AT TIME ZONE $2"} AS value`,
@@ -108,7 +121,7 @@ async function snapshot(db: DB, input: unknown) {
 export function registerCash(app: FastifyInstance,
   write: (request: FastifyRequest, fn: (db: pg.PoolClient, actor: Actor) => Promise<unknown>) => Promise<unknown>) {
   app.get("/api/register/settings", async request => {
-    owner(request);
+    closer(request.actor!);
     const { rows: [s] } = await pool.query(`SELECT to_char(day_start,'HH24:MI') AS day_start,opening_default,
       to_char((clock_timestamp() AT TIME ZONE $1 - day_start)::date + day_start,'YYYY-MM-DD"T"HH24:MI') AS period_from
       FROM register_settings`, [config.timezone]);
@@ -126,11 +139,11 @@ export function registerCash(app: FastifyInstance,
     });
   });
   app.post("/api/register/preview", async request => {
-    owner(request);
+    closer(request.actor!);
     return transaction(async db => {
       await lockRegister(db);
       const data = await snapshot(db, request.body);
-      return { ...data, fingerprint: digest(JSON.stringify(data)) };
+      return { ...visibleSnapshot(data,request.actor!), fingerprint: digest(JSON.stringify(data)) };
     });
   });
   app.post("/api/register/entries", request => {
@@ -163,11 +176,12 @@ export function registerCash(app: FastifyInstance,
     });
   });
   app.post("/api/register/closings", request => {
-    owner(request);
+    closer(request.actor!);
     return write(request, async (db, actor) => {
+      closer(actor);
       const body = z.object({ period: periodSchema, fingerprint: z.string().length(64), opening: amount,
         counts: z.record(z.string(), z.number().int().min(0).max(1000000)),
-        actual_sinpe: amount.nullable(), actual_card: amount.nullable(), note: z.string().trim().max(1000),
+        actual_sinpe: z.null().optional(), actual_card: z.null().optional(), note: z.string().trim().max(1000),
         supersedes: uuid.nullable(), confirmed: z.literal(true) }).strict().parse(request.body);
       const allowed = cashGroups.flatMap(g => [...g.values]).map(String);
       need(Object.keys(body.counts).every(k => allowed.includes(k)), 400, "Denominación de efectivo desconocida");
@@ -177,13 +191,11 @@ export function registerCash(app: FastifyInstance,
       need(digest(JSON.stringify(data)) === body.fingerprint, 409, "El resumen cambió. Actualízalo y revisa la diferencia antes de guardar");
       const expected = safe(body.opening + data.collected.cash + data.movements.cash);
       const difference = safe(actualCash-expected);
-      const differences = [difference,
-        body.actual_sinpe === null ? 0 : safe(body.actual_sinpe-data.collected.sinpe-data.movements.sinpe),
-        body.actual_card === null ? 0 : safe(body.actual_card-data.collected.card-data.movements.card)];
-      need((!differences.some(n => n !== 0) && !data.unclassified) || body.note.length >= 3, 400,
+      need((difference === 0 && !data.unclassified) || body.note.length >= 3, 400,
         "Añade una observación para guardar un cierre con diferencias o pagos sin clasificar");
       if (body.supersedes) {
         const prev = (await db.query("SELECT * FROM cash_closings WHERE id=$1", [body.supersedes])).rows[0];
+        need(!prev || actor.role === "admin" || prev.actor_id === actor.id,403,"Solo puedes revisar tus propios cierres de caja");
         need(prev && prev.period_from.toISOString() === data.period.from && prev.period_to.toISOString() === data.period.to && prev.currency === data.currency,
           400, "La revisión debe conservar el mismo intervalo y moneda del cierre anterior");
       }
@@ -191,30 +203,31 @@ export function registerCash(app: FastifyInstance,
         actual_cash,actual_sinpe,actual_card,expected_cash,difference_cash,note,supersedes)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
         [actor.id,data.period.from,data.period.to,data.currency,JSON.stringify(data),JSON.stringify(body.counts),body.opening,
-          actualCash,body.actual_sinpe,body.actual_card,expected,difference,body.note,body.supersedes])).rows[0];
+          actualCash,null,null,expected,difference,body.note,body.supersedes])).rows[0];
       await audit(db, actor.id, "Cierre de caja guardado", result.id, null,
         { period: data.period, opening: body.opening, actual_cash: actualCash, expected_cash: expected, difference_cash: difference, supersedes: body.supersedes });
-      await changed(db, "admins");
-      return { ...result, actor_name: actor.name };
+      await changed(db, "user", actor.id);
+      return visibleClosing({ ...result, actor_name: actor.name },actor);
     });
   });
   app.get("/api/register/closings", async request => {
-    owner(request);
+    closer(request.actor!);
     const q = z.object({ from: z.iso.date().optional(), to: z.iso.date().optional(),
       offset: z.coerce.number().int().min(0).max(1000000).default(0) }).parse(request.query);
-    const { rows } = await pool.query(`SELECT c.id,c.created_at,c.period_from,c.period_to,c.currency,c.opening,
+    const { rows } = await pool.query(`SELECT c.id,c.actor_id,c.created_at,c.period_from,c.period_to,c.currency,c.opening,
       c.actual_cash,c.expected_cash,c.difference_cash,c.supersedes,u.name AS actor_name
       FROM cash_closings c JOIN users u ON u.id=c.actor_id
-      WHERE ($1::date IS NULL OR c.period_from >= ($1::timestamp AT TIME ZONE $3))
+      WHERE ($5::boolean OR c.actor_id=$6)
+      AND ($1::date IS NULL OR c.period_from >= ($1::timestamp AT TIME ZONE $3))
       AND ($2::date IS NULL OR c.period_from < (($2::date+1)::timestamp AT TIME ZONE $3))
-      ORDER BY c.created_at DESC,c.id LIMIT 51 OFFSET $4`, [q.from || null,q.to || null,config.timezone,q.offset]);
+      ORDER BY c.created_at DESC,c.id LIMIT 51 OFFSET $4`, [q.from || null,q.to || null,config.timezone,q.offset,request.actor!.role === "admin",request.actor!.id]);
     return { rows: rows.slice(0,50), has_more: rows.length > 50 };
   });
   app.get("/api/register/closings/:id", async request => {
-    owner(request);
+    closer(request.actor!);
     const id = uuid.parse((request.params as {id: string}).id);
-    const row = (await pool.query(`SELECT c.*,u.name AS actor_name FROM cash_closings c JOIN users u ON u.id=c.actor_id WHERE c.id=$1`, [id])).rows[0];
+    const row = (await pool.query(`SELECT c.*,u.name AS actor_name FROM cash_closings c JOIN users u ON u.id=c.actor_id WHERE c.id=$1 AND ($2::boolean OR c.actor_id=$3)`, [id,request.actor!.role === "admin",request.actor!.id])).rows[0];
     need(row, 404, "No se encontró el cierre de caja");
-    return row;
+    return visibleClosing(row,request.actor!);
   });
 }

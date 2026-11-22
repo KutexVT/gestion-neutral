@@ -45,7 +45,7 @@ declare module "fastify" {
     actor: Actor | null;
   }
 }
-const userFields = "id,username,name,role,active,created_at";
+const userFields = "id,username,name,role,active,created_at,can_close_register";
 const admin = (request: FastifyRequest) => {
   need(
     request.actor?.role === "admin",
@@ -70,7 +70,7 @@ async function currentActor(hash: string): Promise<Actor | null> {
   const {
     rows: [row],
   } = await pool.query(
-    `SELECT u.id,u.name,u.username,u.role,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id
+    `SELECT u.id,u.name,u.username,u.role,u.can_close_register,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token_hash=$1 AND u.active AND s.expires_at>now()`,
     [hash],
   );
@@ -436,10 +436,23 @@ export async function buildApp({ logging = true, events = true } = {}) {
   app.get("/api/users", async (request) => {
     admin(request);
     return (
-      await pool.query(`SELECT u.id,u.username,u.name,u.role,u.active,u.created_at,
+      await pool.query(`SELECT u.id,u.username,u.name,u.role,u.active,u.created_at,u.can_close_register,
     a.id AS personal_account_id,a.calculated_total AS personal_total,a.currency AS personal_currency
     FROM users u LEFT JOIN accounts a ON a.created_by=u.id AND a.kind='personal' ORDER BY u.active DESC,u.name`)
     ).rows;
+  });
+  app.patch("/api/users/:id/register-permission", request => {
+    admin(request);
+    const id = resourceId(request);
+    const body = z.object({can_close_register:z.boolean()}).strict().parse(request.body);
+    return write(request, async (db, actor) => {
+      const before = (await db.query("SELECT can_close_register FROM users WHERE id=$1 AND role='waiter' AND active FOR UPDATE", [id])).rows[0];
+      need(before,404,"Mesero activo no encontrado");
+      const user = (await db.query(`UPDATE users SET can_close_register=$2 WHERE id=$1 RETURNING ${userFields}`, [id,body.can_close_register])).rows[0];
+      await audit(db,actor.id,"Permiso de cierre de caja cambiado",id,before,body);
+      await changed(db,"user",id);
+      return user;
+    });
   });
   app.post("/api/users", async (request) => {
     admin(request);
@@ -541,10 +554,16 @@ export async function buildApp({ logging = true, events = true } = {}) {
       ))
         continue;
       try {
-        if (!(await currentActor(stream.actor.sessionHash))) {
+        const current = await currentActor(stream.actor.sessionHash);
+        if (!current) {
           stream.response.write("event: revoked\ndata: {}\n\n");
           disconnect(stream);
-        } else stream.response.write("event: change\ndata: {}\n\n");
+        } else {
+          if (current.can_close_register !== stream.actor.can_close_register)
+            stream.response.write(`event: profile\ndata: ${JSON.stringify({can_close_register:current.can_close_register})}\n\n`);
+          stream.actor = current;
+          stream.response.write("event: change\ndata: {}\n\n");
+        }
       } catch {
         disconnect(stream);
       }

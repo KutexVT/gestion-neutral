@@ -1038,7 +1038,7 @@ test("cierre de caja: pagos mixtos, conteo, movimientos, permisos e historia inm
   assert.equal(preview.movements.cash,-200000);
   assert.equal(preview.sellers[0].name,paid.creator_name);
   const payload = {period:preview.period,fingerprint:preview.fingerprint,opening:500000,
-    counts:{"1000":10,"500":6},actual_sinpe:8000000,actual_card:null,note:"",supersedes:null,confirmed:true};
+    counts:{"1000":10,"500":6},actual_sinpe:null,actual_card:null,note:"",supersedes:null,confirmed:true};
   const key = randomUUID();
   const save = await request(owner,"POST","/register/closings",payload,key);
   assert.equal(save.statusCode,200,save.body);
@@ -1116,6 +1116,67 @@ test("despliegue gradual conserva cobros hechos por el servidor anterior", async
   assert.equal(row.payment_cash,100000);
   assert.equal(row.payment_sinpe,0);
   assert.equal(row.payment_card,0);
+});
+
+test("permiso delegado: cierres propios, historial del dueño, revocación y pagos automáticos", async () => {
+  const path = `/users/${first.id}/register-permission`;
+  assert.equal((await request(first,"PATCH",path,{can_close_register:true})).statusCode,403);
+  assert.equal((await request(owner,"PATCH",path,{can_close_register:"true"})).statusCode,400);
+  assert.equal((await request(owner,"PATCH",`/users/${owner.id}/register-permission`,{can_close_register:true})).statusCode,404);
+  for(const actor of [first,second]) {
+    await ok(owner,"PATCH",`/users/${actor.id}/register-permission`,{can_close_register:true});
+    assert.equal((await ok(actor,"GET","/me")).user.can_close_register,true);
+  }
+  const from = (await pool.query("SELECT clock_timestamp() AS t")).rows[0].t.toISOString();
+  const p=await product(4), a=await customer(first);
+  const consumed=await ok(first,"POST",`/accounts/${a.id}/consumption`,{version:1,add:[{product_id:p.id,quantity:1}]});
+  await ok(first,"POST",`/accounts/${a.id}/close`,{version:consumed.account.version,final_total:100000,confirmed:true,cash_received:20000,
+    payments:{cash:20000,sinpe:30000,card:50000}});
+  await ok(owner,"POST","/register/entries",{method:"sinpe",direction:"in",amount:5000,occurred_at:new Date().toISOString(),reason:"Aporte electrónico"});
+  await ok(owner,"POST","/register/entries",{method:"card",direction:"out",amount:5000,occurred_at:new Date().toISOString(),reason:"Devolución con tarjeta"});
+  const preview=await ok(owner,"POST","/register/preview",{from});
+  const payload={period:preview.period,fingerprint:preview.fingerprint,opening:10000,counts:{"100":3},note:"",supersedes:null,confirmed:true};
+  for(const field of ["actual_sinpe","actual_card"]) {
+    assert.equal((await request(owner,"POST","/register/closings",{...payload,[field]:999})).statusCode,400);
+  }
+  const ownerClosing=await ok(owner,"POST","/register/closings",payload);
+  const staffPreview=await ok(first,"POST","/register/preview",preview.period);
+  assert.equal(staffPreview.fingerprint,preview.fingerprint);
+  assert.ok(!("cost" in staffPreview));assert.ok(!("profit" in staffPreview));assert.deepEqual(staffPreview.events,[]);
+  assert.deepEqual(staffPreview.personal,[]);assert.ok(staffPreview.sales.every((sale:any)=>!("cost" in sale)));
+  assert.equal((await request(first,"PUT","/register/settings",{day_start:"00:00",opening_default:0})).statusCode,403);
+  assert.equal((await request(first,"POST","/register/entries",{})).statusCode,403);
+  assert.equal((await request(first,"POST",`/register/entries/${randomUUID()}/reverse`,{})).statusCode,403);
+  assert.equal((await request(first,"GET",`/register/closings/${ownerClosing.id}`)).statusCode,404);
+  assert.equal((await request(first,"POST","/register/closings",{...payload,supersedes:ownerClosing.id})).statusCode,403);
+  const key=randomUUID();
+  const response=await request(first,"POST","/register/closings",payload,key);
+  assert.equal(response.statusCode,200,response.body);
+  const saved=response.json();
+  assert.equal(saved.actor_id,first.id);assert.equal(saved.actor_name,"ana");
+  assert.equal(saved.actual_sinpe,null);assert.equal(saved.actual_card,null);
+  assert.equal(saved.total,110000);assert.equal(saved.charged_total,110000);assert.equal(saved.difference_cash,0);
+  assert.equal(saved.snapshot.collected.sinpe,30000);assert.equal(saved.snapshot.movements.sinpe,5000);
+  assert.ok(!("profit" in saved.snapshot));
+  const ownHistory=await ok(first,"GET","/register/closings");
+  assert.equal(ownHistory.rows.length,1);assert.equal(ownHistory.rows[0].id,saved.id);
+  assert.equal((await ok(second,"GET","/register/closings")).rows.length,0);
+  assert.equal((await request(second,"GET",`/register/closings/${saved.id}`)).statusCode,404);
+  const ownerView=await ok(owner,"GET",`/register/closings/${saved.id}`);
+  assert.equal(ownerView.snapshot.profit,50000);assert.equal(ownerView.actor_name,"ana");
+  assert.ok((await ok(owner,"GET","/register/closings")).rows.some((r:any)=>r.id===saved.id&&r.actor_id===first.id));
+  const revision=await ok(first,"POST","/register/closings",{...payload,supersedes:saved.id});
+  assert.equal(revision.supersedes,saved.id);
+  await ok(owner,"PATCH",path,{can_close_register:false});
+  assert.equal((await ok(first,"GET","/me")).user.can_close_register,false);
+  for(const [method,url,body] of [["GET","/register/settings",undefined],["GET","/register/closings",undefined],
+    ["GET",`/register/closings/${saved.id}`,undefined],["POST","/register/preview",{from}],["POST","/register/closings",payload]] as const)
+    assert.equal((await request(first,method,url,body)).statusCode,403);
+  assert.equal((await request(first,"POST","/register/closings",payload,key)).statusCode,403);
+  assert.equal((await ok(owner,"GET",`/register/closings/${saved.id}`)).actor_name,"ana");
+  const audit=(await ok(owner,"GET",`/audit?seller=${owner.id}`)).rows;
+  assert.ok(audit.some((event:any)=>event.action==="Permiso de cierre de caja cambiado"));
+  await ok(owner,"PATCH",`/users/${second.id}/register-permission`,{can_close_register:false});
 });
 
 test("datos, fotos y sesiones sobreviven al reinicio de la API", async () => {

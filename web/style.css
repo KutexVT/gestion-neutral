@@ -3265,3 +3265,5 @@ input,select { caret-color: currentColor; }
 :root[data-theme="dark"] input::placeholder { color: #bdbdbd; opacity: 1; }
 
 .inventory-cost { display: block; margin-top: 8px; font-size: 11px; line-height: 1.7; font-weight: 400; color: var(--ink); overflow-wrap: anywhere; }
+
+.team-permission { min-height: 44px; line-height: 1.5; margin-block: 12px; }

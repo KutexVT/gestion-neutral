@@ -4,6 +4,7 @@ export type User = {
   username: string;
   role: "admin" | "waiter";
   active: boolean;
+  can_close_register?: boolean;
   personal_account_id?: string;
   personal_total?: number;
   personal_currency?: string;
